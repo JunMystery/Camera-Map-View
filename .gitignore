@@ -5,3 +5,13 @@ AGENTS.md
 
 # AI Agent Coding Standards
 GEMINI.md
+
+**/__pycache__
+.venv
+
+.pytest_cache
+__pycache__
+*.pyc
+.vscode
+assets/data/*.db
+assets/data/*.db.bak

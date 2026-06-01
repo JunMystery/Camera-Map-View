@@ -1,0 +1,25 @@
+"""Layer identifiers and lightweight state records for the map canvas."""
+
+from dataclasses import dataclass
+
+
+BACKGROUND_LAYER = "background"
+GRID_LAYER = "grid"
+CAMERAS_LAYER = "cameras"
+DRAWINGS_LAYER = "drawings"
+IMAGES_LAYER = "images"
+TEXT_LAYER = "text"
+ANNOTATION_LAYERS = [DRAWINGS_LAYER, IMAGES_LAYER, TEXT_LAYER]
+ALL_LAYERS = [BACKGROUND_LAYER, GRID_LAYER, CAMERAS_LAYER, *ANNOTATION_LAYERS]
+
+
+@dataclass
+class LayerState:
+    """Represent one visible layer row in the layer manager panel."""
+
+    layer_id: str
+    display_name: str
+    visible: bool
+    locked: bool
+    item_count: int
+    active: bool = False
