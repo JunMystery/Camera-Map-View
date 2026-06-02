@@ -19,10 +19,6 @@ class AppSettingsActions:
             float(self.settings["ping_timeout"]),
             int(self.settings["ping_retries"]),
         )
-        self.map_canvas.resize_canvas(int(self.settings["canvas_width"]), int(self.settings["canvas_height"]))
-        self.map_canvas.redraw_grid(int(self.settings["grid_size"]))
-        self.map_canvas.set_background_scale(float(self.settings["background_scale"]))
-        self.save_current_layout_state()
         save_app_settings(self.settings)
         self.apply_theme()
 

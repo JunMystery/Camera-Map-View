@@ -61,8 +61,8 @@ class CameraLayoutOperations:
         return cursor.rowcount > 0
 
     def delete_layout(self, layout_id: str) -> bool:
-        """Delete a non-default layout and cascade its data."""
-        if layout_id == "default":
+        """Delete a layout and cascade its data."""
+        if not layout_id:
             return False
         cursor = self.db.execute("DELETE FROM map_layouts WHERE id = ?", (layout_id,))
         return cursor.rowcount > 0

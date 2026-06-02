@@ -6,6 +6,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtWidgets import QGraphicsItem
 
 from models.drawing_shape_model import DrawingShape
+from views.camera_view_item import CameraItem
 from views.map_drawing_tools import DrawingMode
 
 
@@ -13,6 +14,8 @@ class MapCanvasDrawingEvents:
     """Handle drawing-mode mouse events and shape layer mapping."""
 
     def _start_drawing(self, event: Any) -> bool:
+        if self.drawing_mode == DrawingMode.LINK and event.button() == Qt.MouseButton.LeftButton:
+            return self._handle_device_link_click(event)
         if self.drawing_mode in {DrawingMode.PAN, DrawingMode.SELECT} or event.button() != Qt.MouseButton.LeftButton:
             return False
         self.drawing_start_pos = self.mapToScene(event.position().toPoint())
@@ -21,6 +24,8 @@ class MapCanvasDrawingEvents:
         return True
 
     def _update_drawing_preview(self, event: Any) -> bool:
+        if self.drawing_mode == DrawingMode.LINK:
+            return False
         if self.drawing_start_pos is None or self.drawing_mode in {DrawingMode.PAN, DrawingMode.SELECT}:
             return False
         current_pos = self.mapToScene(event.position().toPoint())
@@ -35,6 +40,8 @@ class MapCanvasDrawingEvents:
         return True
 
     def _finish_drawing(self, event: Any) -> bool:
+        if self.drawing_mode == DrawingMode.LINK:
+            return False
         if self.drawing_start_pos is None or self.drawing_mode in {DrawingMode.PAN, DrawingMode.SELECT}:
             return False
         end_pos = self.mapToScene(event.position().toPoint())
@@ -66,3 +73,22 @@ class MapCanvasDrawingEvents:
 
     def _shape_from_points(self, start_pos: QPointF, end_pos: QPointF) -> DrawingShape | None:
         return self.drawing_tool.shape_from_points(self.drawing_mode, start_pos, end_pos, self.drawing_color)
+
+    def _handle_device_link_click(self, event: Any) -> bool:
+        item = self.itemAt(event.position().toPoint())
+        if not isinstance(item, CameraItem):
+            return False
+        device_id = item.camera.id
+        if not self.pending_device_link_source_id:
+            self.pending_device_link_source_id = device_id
+            self.scene.clearSelection()
+            item.setSelected(True)
+            event.accept()
+            return True
+        if self.pending_device_link_source_id != device_id:
+            self.device_link_created.emit(self.pending_device_link_source_id, device_id)
+        self.pending_device_link_source_id = ""
+        self.scene.clearSelection()
+        item.setSelected(True)
+        event.accept()
+        return True

@@ -10,7 +10,9 @@ from PyQt6.QtWidgets import QGraphicsItem, QMenu, QStyleOptionGraphicsItem, QWid
 
 from config.i18n import t
 from models.camera_data_model import Camera
+from models.device_catalog import DEVICE_KIND_CAMERA, device_kind_label, device_variant_label
 from views.map_drawing_tools import DrawingMode
+from views.tool_icons import device_pixmap
 from views.ui_theme import (
     DANGER,
     DARK_SURFACE_ALT,
@@ -30,6 +32,8 @@ class CameraItem(QGraphicsItem):
         super().__init__()
         self.camera = camera
         self.edit_callback: Callable[[str], None] | None = None
+        self.location_image_callback: Callable[[str], None] | None = None
+        self.ping_callback: Callable[[str], None] | None = None
         self.move_callback: Callable[[str, float, float], None] | None = None
         self.rotation_callback: Callable[[str, float], None] | None = None
         self.scale_callback: Callable[[str, float], None] | None = None
@@ -54,19 +58,27 @@ class CameraItem(QGraphicsItem):
         self.update_tooltip()
 
     def update_tooltip(self) -> None:
-        """Refresh the hover tooltip from the camera model."""
-        status_key = "camera.status.online" if self.camera.status else "camera.status.offline"
+        """Refresh the hover tooltip from the device model."""
+        if not self.camera.ping_enabled or not self.camera.ip_address:
+            status_text = t("device.status.unknown")
+        else:
+            status_key = "camera.status.online" if self.camera.status else "camera.status.offline"
+            status_text = t(status_key)
+        tooltip_key = "device.tooltip" if self.camera.device_kind == DEVICE_KIND_CAMERA else "device.tooltip.generic"
         self.setToolTip(
             t(
-                "camera.tooltip",
+                tooltip_key,
                 name=self.camera.name,
-                ip_address=self.camera.ip_address,
+                device_kind=device_kind_label(self.camera.device_kind),
+                variant=device_variant_label(self.camera.effective_variant()),
+                ip_address=self.camera.ip_address or t("device.ip_empty"),
                 port=self.camera.port,
-                camera_type=self.camera.camera_type,
                 zone=self.camera.zone or t("camera.notes.empty"),
                 dvr_origin=self.camera.dvr_origin or t("camera.notes.empty"),
                 rotation=int(self.camera.rotation) % 360,
-                status=t(status_key),
+                fov_degrees=int(self.camera.fov_degrees),
+                status=status_text,
+                ping=t("device.ping.enabled") if self.camera.ping_enabled else t("device.ping.disabled"),
                 notes=self.camera.notes or t("camera.notes.empty"),
             )
         )
@@ -90,6 +102,14 @@ class CameraItem(QGraphicsItem):
     def set_edit_callback(self, callback: Callable[[str], None]) -> None:
         """Register a callback for edit requests."""
         self.edit_callback = callback
+
+    def set_location_image_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a callback for location image requests."""
+        self.location_image_callback = callback
+
+    def set_ping_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a callback for active ping requests."""
+        self.ping_callback = callback
 
     def set_move_callback(self, callback: Callable[[str, float, float], None]) -> None:
         """Register a callback for persisted position updates."""
@@ -121,41 +141,33 @@ class CameraItem(QGraphicsItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         is_selected = self.isSelected()
+        is_camera = self.camera.device_kind == DEVICE_KIND_CAMERA
         fov_color = QColor(DANGER)
         fov_color.setAlpha(110 if is_selected else 55)
 
-        painter.save()
-        painter.rotate(self.camera.rotation)
+        if is_camera:
+            painter.save()
+            painter.rotate(self.camera.rotation)
 
-        fov_path = QPainterPath()
-        fov_path.moveTo(0, 0)
-        fov_path.arcTo(QRectF(-50, -50, 100, 100), -30, 60)
-        fov_path.closeSubpath()
-        painter.fillPath(fov_path, QBrush(fov_color))
+            fov_pen = QPen(fov_color, 2.5 if is_selected else 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(fov_pen)
+            if self.camera.fov_degrees >= 360:
+                painter.setBrush(QBrush(fov_color))
+                painter.drawEllipse(QPointF(0, 0), 50, 50)
+            else:
+                fov_span = max(1, min(int(self.camera.fov_degrees), 360))
+                fov_path = QPainterPath()
+                fov_path.moveTo(0, 0)
+                fov_path.arcTo(QRectF(-50, -50, 100, 100), -fov_span / 2, fov_span)
+                fov_path.closeSubpath()
+                painter.fillPath(fov_path, QBrush(fov_color))
+                painter.drawPath(fov_path)
 
-        fov_pen = QPen(fov_color, 2.5 if is_selected else 1.5, Qt.PenStyle.DashLine)
-        painter.setPen(fov_pen)
-        painter.drawPath(fov_path)
+            painter.restore()
 
-        body_color = QColor(LIGHT_TEXT) if self.light_theme else QColor(DARK_SURFACE_ALT)
-        outline_color = QColor(LIGHT_TEXT) if self.light_theme else QColor(TEXT_ON_DARK)
-        lens_color = QColor(TEXT_ON_DARK)
-        painter.setPen(QPen(outline_color, 1.5))
-        painter.setBrush(QBrush(body_color))
-        painter.drawRect(-12, -8, 20, 16)
+        self._paint_device_body(painter, is_selected)
 
-        lens_path = QPainterPath()
-        lens_path.moveTo(8, -5)
-        lens_path.lineTo(15, -8)
-        lens_path.lineTo(15, 8)
-        lens_path.lineTo(8, 5)
-        lens_path.closeSubpath()
-        painter.setBrush(QBrush(lens_color))
-        painter.drawPath(lens_path)
-
-        painter.restore()
-
-        if is_selected:
+        if is_selected and is_camera:
             painter.save()
             painter.rotate(self.camera.rotation)
             painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.DashLine))
@@ -173,7 +185,10 @@ class CameraItem(QGraphicsItem):
             painter.drawRect(self._resize_handle_rect())
             painter.restore()
 
-        status_color = QColor(SUCCESS) if self.camera.status else QColor(DANGER)
+        if not self.camera.ping_enabled or not self.camera.ip_address:
+            status_color = QColor(TEXT_MUTED)
+        else:
+            status_color = QColor(SUCCESS) if self.camera.status else QColor(DANGER)
         painter.setPen(QPen(QColor(TEXT_WHITE), 1))
         painter.setBrush(QBrush(status_color))
         painter.drawEllipse(-16, -14, 8, 8)
@@ -223,6 +238,9 @@ class CameraItem(QGraphicsItem):
         if not self._canvas_allows_handle_edit():
             super().mousePressEvent(event)
             return
+        if self.camera.device_kind != DEVICE_KIND_CAMERA:
+            super().mousePressEvent(event)
+            return
         if event.button() == Qt.MouseButton.LeftButton and self.isSelected() and self._is_on_resize_handle(event.pos()):
             self.is_resizing = True
             self.resize_start_distance = max(self._scene_distance_from_center(event), 1.0)
@@ -268,14 +286,28 @@ class CameraItem(QGraphicsItem):
     def contextMenuEvent(self, event: Any) -> None:
         """Show quick actions for a placed camera."""
         menu = QMenu()
+        location_image_action = QAction(t("camera.context.location_image"), menu)
+        location_image_action.triggered.connect(self._request_location_image)
+        ping_action = QAction(t("camera.context.ping"), menu)
+        ping_action.triggered.connect(self._request_ping)
         edit_action = QAction(t("camera.context.edit"), menu)
         edit_action.triggered.connect(self._request_edit)
+        menu.addAction(location_image_action)
+        menu.addAction(ping_action)
         menu.addAction(edit_action)
         menu.exec(event.screenPos())
 
     def _request_edit(self) -> None:
         if self.edit_callback is not None:
             self.edit_callback(self.camera.id)
+
+    def _request_location_image(self) -> None:
+        if self.location_image_callback is not None:
+            self.location_image_callback(self.camera.id)
+
+    def _request_ping(self) -> None:
+        if self.ping_callback is not None:
+            self.ping_callback(self.camera.id)
 
     def cancel_interaction(self) -> bool:
         """Cancel an in-progress camera handle edit and restore the original value."""
@@ -351,6 +383,27 @@ class CameraItem(QGraphicsItem):
     def _notify_canvas_layers_changed(self) -> None:
         if self.scene() is None or not self.scene().views():
             return
-        signal = getattr(self.scene().views()[0], "layers_changed", None)
+        view = self.scene().views()[0]
+        signal = getattr(view, "layers_changed", None)
         if signal is not None:
             signal.emit()
+        refresh_links = getattr(view, "refresh_device_links", None)
+        if callable(refresh_links):
+            refresh_links()
+
+    def _paint_device_body(self, painter: QPainter, is_selected: bool) -> None:
+        outline_color = QColor(WARNING if is_selected else TEXT_ON_DARK)
+        painter.setPen(QPen(outline_color, 2 if is_selected else 1.5))
+        painter.setBrush(QBrush(QColor("#f8fafc" if self.light_theme else "#1e293b")))
+        painter.drawRoundedRect(QRectF(-20, -18, 40, 36), 5, 5)
+
+        pixmap = device_pixmap(self.camera.device_kind, 28)
+        if pixmap.isNull():
+            font = QFont("Inter", 8)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QPen(QColor(TEXT_WHITE if not self.light_theme else LIGHT_TEXT), 1))
+            initials = self.camera.device_kind[:2].upper()
+            painter.drawText(QRectF(-16, -12, 32, 24), Qt.AlignmentFlag.AlignCenter, initials)
+            return
+        painter.drawPixmap(-14, -14, 28, 28, pixmap)

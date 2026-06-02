@@ -4,7 +4,9 @@ from collections.abc import Callable
 
 from config.i18n import t
 from controllers.camera_data_manager import CameraDataManager
+from services.active_ping_service import open_active_ping
 from views.camera_view_panel import CameraPanel
+from views.camera_location_image_dialog import CameraLocationImageDialog
 from views.camera_view_dialog import CameraPropertiesDialog
 from views.map_view_canvas import MapCanvas
 
@@ -27,15 +29,22 @@ class CameraPlacementController:
         self.status_callback = status_callback
         self.monitor_refresh_callback = monitor_refresh_callback
         self.dashboard_refresh_callback = dashboard_refresh_callback
-        self.current_layout_id = "default"
+        self.current_layout_id = ""
 
         self.map_canvas.camera_dropped.connect(self.handle_camera_dropped)
         self.map_canvas.camera_edit_requested.connect(self.edit_camera)
+        self.map_canvas.camera_location_image_requested.connect(self.show_location_image)
+        self.map_canvas.camera_ping_requested.connect(self.ping_camera)
         self.map_canvas.camera_moved.connect(self.update_camera_position)
-        self.map_canvas.camera_rotated.connect(self.camera_manager.update_camera_rotation)
-        self.map_canvas.camera_resized.connect(self.camera_manager.update_camera_scale)
+        self.map_canvas.camera_rotated.connect(self.update_camera_rotation)
+        self.map_canvas.camera_resized.connect(self.update_camera_scale)
         self.map_canvas.camera_deleted.connect(self.unplace_camera)
+        self.map_canvas.device_link_created.connect(self.add_device_link)
+        self.map_canvas.device_link_delete_requested.connect(self.delete_device_link)
         self.map_canvas.object_layer_changed.connect(self.update_object_layer)
+        self.map_canvas.object_renamed.connect(self.update_object_name)
+        self.map_canvas.object_locked_changed.connect(self.update_object_lock)
+        self.map_canvas.object_z_changed.connect(self.update_object_z_index)
         self.map_canvas.drawing_created.connect(self.add_drawing_shape)
         self.map_canvas.drawing_updated.connect(self.update_drawing_shape)
         self.map_canvas.drawing_deleted.connect(self.camera_manager.delete_drawing_shape)
@@ -47,12 +56,20 @@ class CameraPlacementController:
         if layout_id is not None:
             self.current_layout_id = layout_id
         self.map_canvas.clear_map_items()
+        if not self.current_layout_id or self.camera_manager.get_layout(self.current_layout_id) is None:
+            self.map_canvas.set_canvas_layers([], "")
+            self.camera_panel.set_cameras([], set(), [])
+            self.map_canvas.set_device_links([])
+            self._refresh_dashboard()
+            return
         self.camera_manager.seed_default_cameras(self.current_layout_id)
         self.map_canvas.set_canvas_layers(self.camera_manager.get_layers(self.current_layout_id), self.current_layout_id)
         placed_cameras = self.camera_manager.get_placed_cameras(self.current_layout_id)
+        device_links = self.camera_manager.get_device_links(self.current_layout_id)
         self.camera_panel.set_cameras(
             self.camera_manager.get_all_cameras(self.current_layout_id),
             {camera.id for camera in placed_cameras},
+            device_links,
         )
 
         for camera in placed_cameras:
@@ -61,6 +78,7 @@ class CameraPlacementController:
         for shape in self.camera_manager.get_drawing_shapes(self.current_layout_id):
             self.map_canvas.add_drawing_shape(shape)
 
+        self.map_canvas.set_device_links(device_links)
         self._refresh_dashboard()
 
     def handle_camera_dropped(self, camera_id: str, x: float, y: float) -> None:
@@ -73,9 +91,10 @@ class CameraPlacementController:
         camera.position_y = y
         camera.layer_id = self._target_layer_for_camera()
 
-        self.camera_manager.update_camera_position(camera.id, x, y)
+        if not self.camera_manager.update_camera_position_in_layout(camera.id, x, y, self.current_layout_id):
+            return
         if camera.layer_id:
-            self.camera_manager.update_camera_layer(camera.id, camera.layer_id)
+            self.camera_manager.update_camera_layer(camera.id, camera.layer_id, self.current_layout_id)
         self.map_canvas.add_camera_item(camera)
         self._refresh_dashboard()
         self._show_status(
@@ -85,7 +104,15 @@ class CameraPlacementController:
 
     def update_camera_position(self, camera_id: str, x: float, y: float) -> None:
         """Persist direct movement of an already placed camera item."""
-        self.camera_manager.update_camera_position(camera_id, x, y)
+        self.camera_manager.update_camera_position_in_layout(camera_id, x, y, self.current_layout_id)
+
+    def update_camera_rotation(self, camera_id: str, rotation: float) -> None:
+        """Persist direct rotation inside the active layout."""
+        self.camera_manager.update_camera_rotation_in_layout(camera_id, rotation, self.current_layout_id)
+
+    def update_camera_scale(self, camera_id: str, display_scale: float) -> None:
+        """Persist direct resize inside the active layout."""
+        self.camera_manager.update_camera_scale_in_layout(camera_id, display_scale, self.current_layout_id)
 
     def handle_camera_status_updated(self, camera_id: str, is_online: bool, latency_ms: float) -> None:
         """Persist ping results and update any visible camera marker."""
@@ -93,6 +120,7 @@ class CameraPlacementController:
             return
 
         self.map_canvas.update_camera_status(camera_id, is_online)
+        self._refresh_camera_panel()
         self._refresh_dashboard()
         status_key = "camera.status.online" if is_online else "camera.status.offline"
         self._show_status(
@@ -102,11 +130,17 @@ class CameraPlacementController:
 
     def edit_camera(self, camera_id: str) -> None:
         """Open the camera properties dialog and persist accepted changes."""
-        camera = self.camera_manager.get_camera(camera_id)
+        camera = self.camera_manager.get_camera_in_layout(camera_id, self.current_layout_id)
         if camera is None:
             return
 
-        dialog = CameraPropertiesDialog(camera, self.map_canvas.window())
+        dialog = CameraPropertiesDialog(
+            camera,
+            self.map_canvas.window(),
+            self.camera_manager.get_all_cameras(self.current_layout_id),
+            self.camera_manager.get_linked_device_ids(camera_id, self.current_layout_id),
+            self.camera_manager.get_incoming_device_ids(camera_id, self.current_layout_id),
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
@@ -114,38 +148,54 @@ class CameraPlacementController:
         if not self.camera_manager.update_camera_details(updated_camera):
             self._show_status(t("status.camera_update_failed"), 5000)
             return
+        self.camera_manager.replace_device_links(updated_camera.id, dialog.get_linked_device_ids(), self.current_layout_id)
 
         self.map_canvas.refresh_camera_item(updated_camera)
-        self.camera_panel.set_cameras(
-            self.camera_manager.get_all_cameras(self.current_layout_id),
-            {camera.id for camera in self.camera_manager.get_placed_cameras(self.current_layout_id)},
-        )
+        self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
+        self._refresh_camera_panel()
         if self.monitor_refresh_callback is not None:
             self.monitor_refresh_callback()
-        self._show_status(t("status.camera_updated", name=updated_camera.name), 5000)
+        self._show_status(t("status.device_updated", name=updated_camera.name), 5000)
+
+    def show_location_image(self, camera_id: str) -> None:
+        """Open the location photo for a camera or its edit dialog when missing."""
+        camera = self.camera_manager.get_camera_in_layout(camera_id, self.current_layout_id)
+        if camera is None:
+            return
+        if not camera.location_image_path:
+            self._show_status(t("status.location_image_missing", name=camera.name), 5000)
+            self.edit_camera(camera_id)
+            return
+        dialog = CameraLocationImageDialog(camera.location_image_path, camera.name, self.map_canvas.window())
+        dialog.exec()
+
+    def ping_camera(self, camera_id: str) -> None:
+        """Open a user-managed active ping terminal for one camera."""
+        camera = self.camera_manager.get_camera_in_layout(camera_id, self.current_layout_id)
+        if camera is None:
+            return
+        if open_active_ping(camera.ip_address):
+            self._show_status(t("status.active_ping_started", ip_address=camera.ip_address), 5000)
+            return
+        self._show_status(t("status.active_ping_failed", ip_address=camera.ip_address), 5000)
 
     def delete_camera(self, camera_id: str) -> None:
         """Delete a camera from storage and visible views."""
-        if not self.camera_manager.delete_camera(camera_id):
+        if not self.camera_manager.delete_camera_in_layout(camera_id, self.current_layout_id):
             return
         self.map_canvas.remove_camera_item(camera_id)
-        self.camera_panel.set_cameras(
-            self.camera_manager.get_all_cameras(self.current_layout_id),
-            {camera.id for camera in self.camera_manager.get_placed_cameras(self.current_layout_id)},
-        )
+        self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
+        self._refresh_camera_panel()
         if self.monitor_refresh_callback is not None:
             self.monitor_refresh_callback()
         self._refresh_dashboard()
 
     def unplace_camera(self, camera_id: str) -> None:
         """Remove a camera marker from the canvas while keeping the camera record."""
-        if not self.camera_manager.unplace_camera(camera_id):
+        if not self.camera_manager.unplace_camera_in_layout(camera_id, self.current_layout_id):
             return
         self.map_canvas.remove_camera_item(camera_id)
-        self.camera_panel.set_cameras(
-            self.camera_manager.get_all_cameras(self.current_layout_id),
-            {camera.id for camera in self.camera_manager.get_placed_cameras(self.current_layout_id)},
-        )
+        self._refresh_camera_panel()
         self._refresh_dashboard()
 
     def _show_status(self, message: str, timeout_ms: int) -> None:
@@ -155,6 +205,17 @@ class CameraPlacementController:
     def _refresh_dashboard(self) -> None:
         if self.dashboard_refresh_callback is not None:
             self.dashboard_refresh_callback()
+
+    def _refresh_camera_panel(self) -> None:
+        """Refresh the sidebar with current devices, placement, and topology links."""
+        if not self.current_layout_id:
+            self.camera_panel.set_cameras([], set(), [])
+            return
+        self.camera_panel.set_cameras(
+            self.camera_manager.get_all_cameras(self.current_layout_id),
+            {camera.id for camera in self.camera_manager.get_placed_cameras(self.current_layout_id)},
+            self.camera_manager.get_device_links(self.current_layout_id),
+        )
 
     def add_drawing_shape(self, shape: object) -> bool:
         """Persist drawings into the active layout."""
@@ -167,9 +228,58 @@ class CameraPlacementController:
     def update_object_layer(self, object_type: str, object_id: str, layer_id: str) -> None:
         """Persist a canvas object layer assignment."""
         if object_type == "camera":
-            self.camera_manager.update_camera_layer(object_id, layer_id)
+            self.camera_manager.update_camera_layer(object_id, layer_id, self.current_layout_id)
         elif object_type == "drawing":
-            self.camera_manager.update_drawing_shape_layer(object_id, layer_id)
+            self.camera_manager.update_drawing_shape_layer(object_id, layer_id, self.current_layout_id)
+
+    def update_object_lock(self, object_type: str, object_id: str, locked: bool) -> None:
+        """Persist layer-object lock state."""
+        if object_type == "camera":
+            self.camera_manager.update_camera_object_locked(object_id, locked, self.current_layout_id)
+        elif object_type == "drawing":
+            self.camera_manager.update_drawing_shape_object_locked(object_id, locked, self.current_layout_id)
+
+    def update_object_z_index(self, object_type: str, object_id: str, z_index: int) -> None:
+        """Persist layer-object z-index."""
+        if object_type == "camera":
+            self.camera_manager.update_camera_z_index(object_id, z_index, self.current_layout_id)
+        elif object_type == "drawing":
+            self.camera_manager.update_drawing_shape_z_index(object_id, z_index, self.current_layout_id)
+
+    def add_device_link(self, source_device_id: str, target_device_id: str) -> None:
+        """Persist a canvas-created device link."""
+        if self.camera_manager.add_device_link(source_device_id, target_device_id, self.current_layout_id):
+            self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
+            self._refresh_camera_panel()
+            self._show_status(t("status.device_link_created"), 3000)
+            return
+        self._show_status(t("status.device_link_skipped"), 3000)
+
+    def delete_device_link(self, source_device_id: str, target_device_id: str) -> None:
+        """Remove one canvas-requested device link."""
+        if self.camera_manager.delete_device_link_between(source_device_id, target_device_id, self.current_layout_id):
+            self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
+            self._refresh_camera_panel()
+            self._show_status(t("status.device_link_removed"), 3000)
+            return
+        self._show_status(t("status.device_link_remove_failed"), 3000)
+
+    def update_object_name(self, object_type: str, object_id: str, display_name: str) -> None:
+        """Persist a layer object display name change."""
+        display_name = display_name.strip()
+        if not display_name:
+            return
+        if object_type == "camera":
+            camera = self.camera_manager.get_camera_in_layout(object_id, self.current_layout_id)
+            if camera is None:
+                return
+            camera.name = display_name
+            if self.camera_manager.update_camera_details(camera):
+                self.map_canvas.refresh_camera_item(camera)
+                self._refresh_camera_panel()
+                self._refresh_dashboard()
+        elif object_type == "drawing":
+            self.camera_manager.update_drawing_shape_display_name(object_id, display_name, self.current_layout_id)
 
     def _target_layer_for_camera(self) -> str:
         return self.map_canvas.active_layer_id or self.camera_manager.first_layer_id(self.current_layout_id)

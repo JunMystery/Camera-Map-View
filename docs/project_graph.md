@@ -8,7 +8,7 @@ main.py
     +-- MapCanvas
     +-- ControlLayoutPanel
     |   +-- layout selector/actions
-    |   +-- camera search/group/filter/actions
+    |   +-- device search/group/filter/actions
     +-- DrawingToolsPanel
     +-- LayersPanel
     +-- StatusDashboard
@@ -153,6 +153,7 @@ DrawingToolsPanel
 +-- choose_color_action -> QColorDialog
 +-- delete_selected_action -> MapCanvas.delete_selected_drawings()
 +-- rotate_camera_action -> MapCanvas.rotate_selected_cameras(15)
++-- link_device_action -> MapCanvas.set_drawing_mode(LINK)
 +-- grid_action -> MapCanvas.set_grid_visible()
 +-- info actions -> MapCanvas.set_camera_info_visibility()
 ```
@@ -168,8 +169,9 @@ PAN
 
 SELECT
 +-- restore item interaction flags
-+-- allow camera/drawing select and move
++-- allow device/drawing select and move
 +-- allow camera rotate and resize handles
++-- allow LINK mode click source device then target device
 
 Drawing modes
 +-- use cross cursor
@@ -177,7 +179,7 @@ Drawing modes
 +-- persist final shape through drawing_created signal
 ```
 
-`Esc` cancels in-progress drawing previews, panning, and camera rotate/resize interactions.
+`Esc` cancels in-progress drawing previews, panning, link source selection, and camera rotate/resize interactions.
 
 ## Canvas And Layer Graph
 
@@ -187,8 +189,9 @@ MapCanvas
 |   +-- QGraphicsPixmapItem
 +-- grid items
 |   +-- QGraphicsLineItem and border rect
-+-- camera items
++-- device items
 |   +-- CameraItem
++-- temporary device link overlay items
 +-- drawing items
     +-- Line
     +-- Rectangle
@@ -261,16 +264,16 @@ map_layouts.id
 +-- drawing_shapes.layout_id
 ```
 
-## Camera Workflow Graph
+## Device Workflow Graph
 
 ```text
 ControlLayoutPanel
 +-- Import CSV -> CameraDataManager.import_cameras_csv(layout_id)
 +-- Export CSV -> CameraDataManager.export_cameras_csv(layout_id)
-+-- Add -> CameraPropertiesDialog -> CameraDataManager.add_camera(layout_id)
-+-- Edit -> CameraPropertiesDialog -> CameraDataManager.update_camera_details()
-+-- Delete -> CameraDataManager.delete_camera()
-+-- Drag camera row -> MapCanvas.dropEvent()
++-- Add device -> CameraPropertiesDialog -> CameraDataManager.add_camera(layout_id)
++-- Edit device -> CameraPropertiesDialog -> CameraDataManager.update_camera_details()
++-- Delete device -> CameraDataManager.delete_camera()
++-- Drag device row -> MapCanvas.dropEvent()
     +-- CameraPlacementController.handle_camera_dropped()
         +-- assign active layer
         +-- CameraDataManager.update_camera_position()
@@ -278,7 +281,7 @@ ControlLayoutPanel
         +-- MapCanvas.add_camera_item()
 ```
 
-Placed camera edit flow:
+Placed device edit flow:
 
 ```text
 CameraItem
@@ -287,6 +290,8 @@ CameraItem
 +-- resized -> MapCanvas.camera_resized -> CameraDataManager.update_camera_scale()
 +-- deleted/unbound -> MapCanvas.camera_deleted -> CameraPlacementController.unplace_camera()
 +-- edit requested -> CameraPlacementController.edit_camera()
++-- link mode click -> MapCanvas.device_link_created -> CameraPlacementController.add_device_link()
++-- selection changed -> MapCanvas.refresh_device_links()
 ```
 
 ## Drawing Persistence Flow
@@ -317,7 +322,8 @@ Export diagram
     +-- collect layout
     +-- collect settings
     +-- collect camera_info_visibility
-    +-- collect cameras with is_placed
+    +-- collect devices with is_placed
+    +-- collect device_links
     +-- collect layers
     +-- collect drawing_shapes
     +-- services.map_package_service.export_map_package()
@@ -335,7 +341,8 @@ Import diagram
         +-- create new layout
         +-- import/remap layers
         +-- extract assets to assets/maps/package_<layout_id>/
-        +-- import cameras
+        +-- import devices
+        +-- import device_links with remapped ids
         +-- import drawings
     +-- refresh_layouts_panel()
     +-- switch_layout(new_layout_id)
@@ -386,6 +393,7 @@ PingService
         |   +-- update cameras.status/last_check
         |   +-- insert ping_history row
         +-- MapCanvas.update_camera_status()
+        +-- devices with ping disabled or blank IP are excluded from monitoring
         +-- StatusDashboard.update_counts()
         +-- status bar message
 ```

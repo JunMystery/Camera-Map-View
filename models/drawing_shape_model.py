@@ -15,3 +15,6 @@ class DrawingShape:
     label: str = ""
     image_path: str = ""
     layer_id: str = ""
+    display_name: str = ""
+    object_locked: bool = False
+    z_index: int = 0

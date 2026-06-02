@@ -4,7 +4,7 @@ import uuid
 from enum import Enum
 
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QColor, QPainterPath, QPen, QPixmap, QPolygonF
+from PyQt6.QtGui import QColor, QPainterPath, QPainterPathStroker, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsLineItem,
@@ -19,6 +19,49 @@ from models.drawing_shape_model import DrawingShape
 from views.ui_theme import DANGER
 
 TEXT_DEFAULT_FONT_SIZE = 18
+STROKE_HIT_PADDING = 8.0
+
+
+def _stroke_shape(path: QPainterPath, pen: QPen) -> QPainterPath:
+    stroker = QPainterPathStroker()
+    stroker.setWidth(max(float(pen.widthF()), float(pen.width())) + STROKE_HIT_PADDING)
+    return stroker.createStroke(path)
+
+
+class SelectableLineItem(QGraphicsLineItem):
+    """Line item selected only through its visible stroke."""
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        path.moveTo(self.line().p1())
+        path.lineTo(self.line().p2())
+        return _stroke_shape(path, self.pen())
+
+
+class SelectablePathItem(QGraphicsPathItem):
+    """Path item selected only through its visible stroke."""
+
+    def shape(self) -> QPainterPath:
+        return _stroke_shape(self.path(), self.pen())
+
+
+class SelectableRectItem(QGraphicsRectItem):
+    """Rectangle item selected only through its border."""
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addRect(self.rect())
+        return _stroke_shape(path, self.pen())
+
+
+class SelectablePolygonItem(QGraphicsPolygonItem):
+    """Polygon item selected only through its border."""
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addPolygon(self.polygon())
+        path.closeSubpath()
+        return _stroke_shape(path, self.pen())
 
 
 class DrawingMode(str, Enum):
@@ -30,6 +73,7 @@ class DrawingMode(str, Enum):
     RECTANGLE = "rectangle"
     ZONE = "zone"
     FREEHAND = "freehand"
+    LINK = "link"
 
 
 class DrawingTool:
@@ -92,13 +136,13 @@ class DrawingTool:
 
         pen = QPen(QColor(shape.color), shape.line_thickness, Qt.PenStyle.SolidLine)
         if shape.shape_type == "Line" and len(shape.points) >= 4:
-            item = QGraphicsLineItem(shape.points[0], shape.points[1], shape.points[2], shape.points[3])
+            item = SelectableLineItem(shape.points[0], shape.points[1], shape.points[2], shape.points[3])
             item.setPen(pen)
             return item
 
         if shape.shape_type == "Rectangle" and len(shape.points) >= 4:
             x1, y1, x2, y2 = shape.points[:4]
-            item = QGraphicsRectItem(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+            item = SelectableRectItem(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
             item.setPen(pen)
             return item
 
@@ -109,7 +153,7 @@ class DrawingTool:
                     for index in range(0, len(shape.points), 2)
                 ]
             )
-            item = QGraphicsPolygonItem(polygon)
+            item = SelectablePolygonItem(polygon)
             item.setPen(pen)
             return item
 
@@ -117,7 +161,7 @@ class DrawingTool:
             path = QPainterPath(QPointF(shape.points[0], shape.points[1]))
             for index in range(2, len(shape.points), 2):
                 path.lineTo(shape.points[index], shape.points[index + 1])
-            item = QGraphicsPathItem(path)
+            item = SelectablePathItem(path)
             item.setPen(pen)
             return item
 

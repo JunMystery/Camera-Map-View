@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -30,8 +30,37 @@ ROLE_ID = Qt.ItemDataRole.UserRole + 1
 ROLE_LAYER_ID = Qt.ItemDataRole.UserRole + 2
 
 
+class LayersTreeWidget(QTreeWidget):
+    """Tree widget that allows moving layer objects between layers."""
+
+    object_dropped = pyqtSignal(str, str, str)
+
+    def dropEvent(self, event) -> None:
+        source = self.currentItem()
+        if source is None or source.data(0, ROLE_TYPE) != "object":
+            super().dropEvent(event)
+            return
+        target = self.itemAt(event.position().toPoint()) if hasattr(event, "position") else self.itemAt(event.pos())
+        if target is None:
+            event.ignore()
+            return
+        if target.data(0, ROLE_TYPE) == "object":
+            target = target.parent()
+        if target is None or target.data(0, ROLE_TYPE) != "layer":
+            event.ignore()
+            return
+        self.object_dropped.emit(
+            str(source.data(1, ROLE_TYPE)),
+            str(source.data(0, ROLE_ID)),
+            str(target.data(0, ROLE_LAYER_ID)),
+        )
+        event.acceptProposedAction()
+
+
 class LayersPanel(QWidget):
     """Manage persistent canvas layers and nested layer objects."""
+
+    close_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -69,7 +98,7 @@ class LayersPanel(QWidget):
             layer_item = QTreeWidgetItem(["", state.display_name, str(state.item_count)])
             layer_item.setData(0, ROLE_TYPE, "layer")
             layer_item.setData(0, ROLE_LAYER_ID, state.layer_id)
-            layer_item.setFlags(layer_item.flags() | Qt.ItemFlag.ItemIsEditable)
+            layer_item.setFlags(layer_item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDropEnabled)
             if state.active:
                 for column in range(3):
                     layer_item.setBackground(column, QBrush(QColor(self._active_row_color)))
@@ -84,7 +113,10 @@ class LayersPanel(QWidget):
                 child.setData(0, ROLE_LAYER_ID, object_state.layer_id)
                 child.setData(0, ROLE_ID, object_state.object_id)
                 child.setData(1, ROLE_TYPE, object_state.object_type)
+                child.setData(2, ROLE_ID, object_state.z_index)
+                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled)
                 layer_item.addChild(child)
+                self.tree.setItemWidget(child, 0, self._object_lock_controls(child, object_state.locked))
             layer_item.setExpanded(state.layer_id not in self._seen_layer_ids or state.layer_id in self._expanded_layer_ids)
             self._sync_layer_toggle_icon(layer_item)
         self._seen_layer_ids = visible_layer_ids
@@ -98,8 +130,7 @@ class LayersPanel(QWidget):
         self.delete_button.setToolTip(t("layer.delete"))
         self.up_button.setToolTip(t("layer.up"))
         self.down_button.setToolTip(t("layer.down"))
-        self.select_button.setToolTip(t("layer.select"))
-        self.move_button.setToolTip(t("layer.move_selected"))
+        self.close_button.setToolTip(t("button.close"))
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -110,21 +141,32 @@ class LayersPanel(QWidget):
         self.setMinimumWidth(240)
         self.setMaximumWidth(340)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(6)
         self.title_label = QLabel(self)
         self.title_label.setObjectName("sectionTitle")
-        layout.addWidget(self.title_label)
+        self.close_button = self._tool_button("close")
+        self.close_button.clicked.connect(self.close_requested.emit)
+        header_row.addWidget(self.title_label, 1)
+        header_row.addWidget(self.close_button)
+        layout.addLayout(header_row)
         layout.addWidget(self._separator())
 
-        self.tree = QTreeWidget(self)
+        self.tree = LayersTreeWidget(self)
         self.tree.setObjectName("layersTree")
         self.tree.setColumnCount(3)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.setDragEnabled(True)
+        self.tree.setAcceptDrops(True)
+        self.tree.setDropIndicatorShown(True)
+        self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree.setRootIsDecorated(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(0, 62)
+        self.tree.setColumnWidth(0, 82)
         self.tree.setColumnWidth(2, 56)
+        self.tree.object_dropped.connect(self._move_dropped_object)
         self.tree.itemExpanded.connect(self._handle_item_expanded)
         self.tree.itemCollapsed.connect(self._handle_item_collapsed)
         self.tree.itemSelectionChanged.connect(self._handle_selection)
@@ -138,15 +180,11 @@ class LayersPanel(QWidget):
         self.delete_button = self._tool_button("delete")
         self.up_button = self._tool_button("up")
         self.down_button = self._tool_button("down")
-        self.select_button = self._tool_button("select_contents")
-        self.move_button = self._tool_button("move_selected")
         self.add_button.clicked.connect(self._add_layer)
         self.delete_button.clicked.connect(self._delete_selected)
-        self.up_button.clicked.connect(lambda: self._move_layer(1))
-        self.down_button.clicked.connect(lambda: self._move_layer(-1))
-        self.select_button.clicked.connect(self._select_contents)
-        self.move_button.clicked.connect(self._move_selected_objects)
-        for button in [self.add_button, self.delete_button, self.up_button, self.down_button, self.select_button, self.move_button]:
+        self.up_button.clicked.connect(lambda: self._move_selected_index(1))
+        self.down_button.clicked.connect(lambda: self._move_selected_index(-1))
+        for button in [self.add_button, self.delete_button, self.up_button, self.down_button]:
             row.addWidget(button)
         layout.addLayout(row)
         self.apply_theme(False)
@@ -181,13 +219,17 @@ class LayersPanel(QWidget):
             return
 
     def _handle_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        if self._refreshing or item.data(0, ROLE_TYPE) != "layer":
+        if self._refreshing or column != 1:
             return
-        layer_id = str(item.data(0, ROLE_LAYER_ID))
-        if column == 1:
+        row_type = item.data(0, ROLE_TYPE)
+        if row_type == "layer":
+            layer_id = str(item.data(0, ROLE_LAYER_ID))
             self.canvas.rename_layer(layer_id, item.text(1))
             self.camera_manager.rename_layer(layer_id, item.text(1))
             self._reload_layers()
+        elif row_type == "object":
+            if not self.canvas.rename_layer_object(str(item.data(1, ROLE_TYPE)), str(item.data(0, ROLE_ID)), item.text(1)):
+                self.refresh()
 
     def _add_layer(self) -> None:
         layout_id = self.layout_id_callback()
@@ -225,25 +267,22 @@ class LayersPanel(QWidget):
         if count:
             self._show_status(t("status.drawing_deleted", count=count), 5000)
 
-    def _move_layer(self, direction: int) -> None:
+    def _move_selected_index(self, direction: int) -> None:
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        if item.data(0, ROLE_TYPE) == "object":
+            if self.canvas.move_layer_object(str(item.data(1, ROLE_TYPE)), str(item.data(0, ROLE_ID)), direction):
+                self.refresh()
+            return
         layer_id = self._selected_layer_id()
         if layer_id and self.camera_manager.move_layer(layer_id, direction, self.layout_id_callback()):
             self._reload_layers()
 
-    def _select_contents(self) -> None:
-        layer_id = self._selected_layer_id()
-        if not layer_id:
-            return
-        count = self.canvas.select_layer_items(layer_id)
-        self._show_status(t("status.layer_selected", count=count), 3000)
-
-    def _move_selected_objects(self) -> None:
-        layer_id = self._selected_layer_id()
-        if not layer_id:
-            return
-        count = self.canvas.move_selected_items_to_layer(layer_id)
-        self.refresh()
-        self._show_status(t("status.layer_moved", count=count), 3000)
+    def _move_dropped_object(self, object_type: str, object_id: str, layer_id: str) -> None:
+        if self.canvas.move_layer_object_to_layer(object_type, object_id, layer_id):
+            self.refresh()
+            self._show_status(t("status.layer_moved", count=1), 3000)
 
     def _selected_layer_id(self) -> str:
         item = self.tree.currentItem()
@@ -279,10 +318,42 @@ class LayersPanel(QWidget):
         checkbox.setChecked(checked)
         checkbox.setToolTip(layer_id)
         checkbox.stateChanged.connect(lambda state, target=layer_id: self._set_layer_visible(target, state == Qt.CheckState.Checked.value))
+        lock = QToolButton(controls)
+        lock.setCheckable(True)
+        lock.setChecked(self.canvas.layer_locked.get(layer_id, False))
+        lock.setIcon(self._icon("lock" if lock.isChecked() else "unlock"))
+        lock.setIconSize(QSize(14, 14))
+        lock.setFixedSize(20, 22)
+        lock.setToolTip(t("layer.locked"))
+        lock.clicked.connect(lambda checked=False, target=layer_id: self._set_layer_locked(target, checked))
         layout.addWidget(toggle)
         layout.addWidget(checkbox)
+        layout.addWidget(lock)
         layout.addStretch(1)
         self._layer_toggle_buttons[layer_id] = toggle
+        return controls
+
+    def _object_lock_controls(self, item: QTreeWidgetItem, locked: bool) -> QWidget:
+        controls = QWidget(self.tree)
+        layout = QHBoxLayout(controls)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        lock = QToolButton(controls)
+        lock.setCheckable(True)
+        lock.setChecked(locked)
+        lock.setIcon(self._icon("lock" if locked else "unlock"))
+        lock.setIconSize(QSize(14, 14))
+        lock.setFixedSize(24, 22)
+        lock.setToolTip(t("layer.locked"))
+        lock.clicked.connect(
+            lambda checked=False, target=item: self._set_object_locked(
+                str(target.data(1, ROLE_TYPE)),
+                str(target.data(0, ROLE_ID)),
+                checked,
+            )
+        )
+        layout.addWidget(lock)
+        layout.addStretch(1)
         return controls
 
     def _toggle_layer_item(self, item: QTreeWidgetItem) -> None:
@@ -333,6 +404,11 @@ class LayersPanel(QWidget):
         self.canvas.set_layer_locked(layer_id, locked)
         self.camera_manager.set_layer_locked(layer_id, locked)
         self.refresh()
+
+    def _set_object_locked(self, object_type: str, object_id: str, locked: bool) -> None:
+        if self._refreshing:
+            return
+        self.canvas.set_layer_object_locked(object_type, object_id, locked)
 
     def _tool_button(self, icon_name: str) -> QToolButton:
         button = QToolButton(self)

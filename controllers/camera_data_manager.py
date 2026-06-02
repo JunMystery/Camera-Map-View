@@ -9,12 +9,14 @@ from models.camera_data_model import Camera
 from models.camera_db_manager import CameraDbManager
 from controllers.camera_layer_operations import CameraLayerOperations
 from controllers.camera_layout_operations import CameraLayoutOperations
+from controllers.device_link_operations import DeviceLinkOperations
 from controllers.drawing_shape_operations import DrawingShapeOperations
+from models.device_catalog import DEVICE_KIND_CAMERA
 from services.camera_csv_service import export_cameras_to_csv, import_cameras_from_csv
 from utils.validators import is_non_empty_text, is_valid_ipv4
 
 
-class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingShapeOperations):
+class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLinkOperations, DrawingShapeOperations):
     """Validate and persist camera records."""
 
     def __init__(self, db_path: str | Path = "assets/data/camera_manager.db") -> None:
@@ -22,7 +24,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
 
     def add_camera(self, camera: Camera, is_placed: bool = False, layout_id: str = "default") -> bool:
         """Add a new camera when its id and IP address are unique."""
-        if not self._is_valid_camera(camera):
+        if not self._is_valid_camera(camera) or self.get_layout(layout_id) is None:
             return False
         self.ensure_default_layers(layout_id)
 
@@ -32,9 +34,10 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
                 INSERT INTO cameras (
                     id, layout_id, name, ip_address, port, camera_type,
                     pos_x, pos_y, rotation, display_scale, status, last_check, notes,
-                    zone, dvr_origin, layer_id, is_placed
+                    zone, dvr_origin, layer_id, location_image_path, device_kind,
+                    variant, ping_enabled, fov_degrees, object_locked, z_index, is_placed
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._camera_to_row_params(camera, layout_id, is_placed),
             )
@@ -54,6 +57,21 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             WHERE id = ?
             """,
             (x, y, self._camera_fallback_layer_id(camera_id), camera_id),
+        )
+        return cursor.rowcount > 0
+
+    def update_camera_position_in_layout(self, camera_id: str, x: float, y: float, layout_id: str) -> bool:
+        """Persist a camera map position only inside the active layout."""
+        cursor = self.db.execute(
+            """
+            UPDATE cameras
+            SET pos_x = ?,
+                pos_y = ?,
+                is_placed = 1,
+                layer_id = CASE WHEN COALESCE(layer_id, '') = '' THEN ? ELSE layer_id END
+            WHERE id = ? AND layout_id = ?
+            """,
+            (x, y, self.first_layer_id(layout_id), camera_id, layout_id),
         )
         return cursor.rowcount > 0
 
@@ -77,7 +95,14 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
                     notes = ?,
                     zone = ?,
                     dvr_origin = ?,
-                    layer_id = ?
+                    layer_id = ?,
+                    location_image_path = ?,
+                    device_kind = ?,
+                    variant = ?,
+                    ping_enabled = ?,
+                    fov_degrees = ?,
+                    object_locked = ?,
+                    z_index = ?
                 WHERE id = ?
                 """,
                 (
@@ -93,6 +118,13 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
                     camera.zone,
                     camera.dvr_origin,
                     camera.layer_id,
+                    camera.location_image_path,
+                    camera.device_kind,
+                    camera.effective_variant(),
+                    int(camera.ping_enabled),
+                    int(camera.fov_degrees),
+                    int(camera.object_locked),
+                    int(camera.z_index),
                     camera.id,
                 ),
             )
@@ -131,7 +163,14 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
 
     def delete_camera(self, camera_id: str) -> bool:
         """Delete a camera by id."""
+        self.delete_device_links_for_device(camera_id)
         cursor = self.db.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
+        return cursor.rowcount > 0
+
+    def delete_camera_in_layout(self, camera_id: str, layout_id: str) -> bool:
+        """Delete a camera only when it belongs to the active layout."""
+        self.delete_device_links_for_device(camera_id, layout_id)
+        cursor = self.db.execute("DELETE FROM cameras WHERE id = ? AND layout_id = ?", (camera_id, layout_id))
         return cursor.rowcount > 0
 
     def unplace_camera(self, camera_id: str) -> bool:
@@ -143,6 +182,18 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             WHERE id = ?
             """,
             (camera_id,),
+        )
+        return cursor.rowcount > 0
+
+    def unplace_camera_in_layout(self, camera_id: str, layout_id: str) -> bool:
+        """Remove a camera from the active map while keeping it in storage."""
+        cursor = self.db.execute(
+            """
+            UPDATE cameras
+            SET is_placed = 0
+            WHERE id = ? AND layout_id = ?
+            """,
+            (camera_id, layout_id),
         )
         return cursor.rowcount > 0
 
@@ -166,14 +217,26 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             row = self.db.fetch_one("SELECT * FROM cameras WHERE id = ?", (camera_id,))
         return self._row_to_camera(row) if row else None
 
+    def get_camera_in_layout(self, camera_id: str, layout_id: str) -> Camera | None:
+        """Return one camera only when it belongs to the requested layout."""
+        row = self.db.fetch_one("SELECT * FROM cameras WHERE id = ? AND layout_id = ?", (camera_id, layout_id))
+        if row:
+            self.ensure_default_layers(layout_id)
+            row = self.db.fetch_one("SELECT * FROM cameras WHERE id = ? AND layout_id = ?", (camera_id, layout_id))
+        return self._row_to_camera(row) if row else None
+
     def get_all_cameras(self, layout_id: str = "default") -> list[Camera]:
         """Return all cameras ordered by name."""
+        if self.get_layout(layout_id) is None:
+            return []
         self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all("SELECT * FROM cameras WHERE layout_id = ? ORDER BY name", (layout_id,))
         return [self._row_to_camera(row) for row in rows]
 
     def get_unplaced_cameras(self, layout_id: str = "default") -> list[Camera]:
         """Return cameras that should appear in the sidebar."""
+        if self.get_layout(layout_id) is None:
+            return []
         self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all(
             "SELECT * FROM cameras WHERE layout_id = ? AND is_placed = 0 ORDER BY name",
@@ -183,6 +246,8 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
 
     def get_placed_cameras(self, layout_id: str = "default") -> list[Camera]:
         """Return cameras that should appear on the map."""
+        if self.get_layout(layout_id) is None:
+            return []
         self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all(
             "SELECT * FROM cameras WHERE layout_id = ? AND is_placed = 1 ORDER BY name",
@@ -192,7 +257,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
 
     def get_all_cameras_for_ping(self, layout_id: str = "default") -> list[Camera]:
         """Return cameras that should be monitored by PingService."""
-        return self.get_all_cameras(layout_id)
+        return [camera for camera in self.get_all_cameras(layout_id) if camera.ping_enabled and is_valid_ipv4(camera.ip_address)]
 
     def get_ping_history(self, camera_id: str) -> list[dict[str, object]]:
         """Return ping history records for one camera."""
@@ -223,6 +288,14 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
         )
         return cursor.rowcount > 0
 
+    def update_camera_rotation_in_layout(self, camera_id: str, rotation: float, layout_id: str) -> bool:
+        """Persist a camera viewing direction only inside one layout."""
+        cursor = self.db.execute(
+            "UPDATE cameras SET rotation = ? WHERE id = ? AND layout_id = ?",
+            (rotation % 360, camera_id, layout_id),
+        )
+        return cursor.rowcount > 0
+
     def update_camera_scale(self, camera_id: str, display_scale: float) -> bool:
         """Persist a camera marker display scale."""
         cursor = self.db.execute(
@@ -231,13 +304,17 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
         )
         return cursor.rowcount > 0
 
+    def update_camera_scale_in_layout(self, camera_id: str, display_scale: float, layout_id: str) -> bool:
+        """Persist a camera marker display scale only inside one layout."""
+        cursor = self.db.execute(
+            "UPDATE cameras SET display_scale = ? WHERE id = ? AND layout_id = ?",
+            (max(0.5, min(display_scale, 3.0)), camera_id, layout_id),
+        )
+        return cursor.rowcount > 0
+
     def seed_default_cameras(self, layout_id: str = "default") -> None:
         """Create sample cameras only when the database is empty."""
-        if layout_id != "default" or self.get_all_cameras(layout_id):
-            return
-
-        for camera in self._default_cameras():
-            self.add_camera(camera, layout_id=layout_id)
+        return
 
     def _camera_to_row_params(
         self,
@@ -262,16 +339,23 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             camera.zone,
             camera.dvr_origin,
             self._resolved_layer_id(camera.layer_id, layout_id),
+            camera.location_image_path,
+            camera.device_kind,
+            camera.effective_variant(),
+            int(camera.ping_enabled),
+            int(camera.fov_degrees),
+            int(camera.object_locked),
+            int(camera.z_index),
             int(is_placed),
         )
 
     def _is_valid_camera(self, camera: Camera) -> bool:
-        return (
-            is_non_empty_text(camera.id)
-            and is_non_empty_text(camera.name)
-            and is_valid_ipv4(camera.ip_address)
-            and 1 <= camera.port <= 65535
-        )
+        has_valid_identity = is_non_empty_text(camera.id) and is_non_empty_text(camera.name) and 1 <= camera.port <= 65535
+        if not has_valid_identity:
+            return False
+        if camera.device_kind == DEVICE_KIND_CAMERA:
+            return is_valid_ipv4(camera.ip_address)
+        return not camera.ip_address or is_valid_ipv4(camera.ip_address)
 
     def _row_to_camera(self, row: sqlite3.Row) -> Camera:
         return Camera.from_dict(
@@ -291,6 +375,13 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
                 "zone": row["zone"] or "",
                 "dvr_origin": row["dvr_origin"] or "",
                 "layer_id": row["layer_id"] or "",
+                "location_image_path": row["location_image_path"] or "",
+                "device_kind": row["device_kind"] or DEVICE_KIND_CAMERA,
+                "variant": row["variant"] or row["camera_type"] or "",
+                "ping_enabled": bool(row["ping_enabled"]),
+                "fov_degrees": int(row["fov_degrees"] or 80),
+                "object_locked": bool(row["object_locked"]),
+                "z_index": int(row["z_index"] or 0),
             }
         )
 

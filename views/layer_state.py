@@ -29,3 +29,4 @@ class LayerObjectState:
     object_type: str
     visible: bool
     locked: bool
+    z_index: int = 0

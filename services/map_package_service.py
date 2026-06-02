@@ -10,10 +10,11 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from controllers.camera_data_manager import CameraDataManager
 from models.camera_data_model import Camera
 from models.canvas_layer_model import CanvasLayer
+from models.device_link_model import DeviceLink
 from models.drawing_shape_model import DrawingShape
 from models.map_layout_model import MapLayout
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 def export_map_package(
@@ -24,6 +25,7 @@ def export_map_package(
     cameras: list[dict[str, object]],
     layers: list[CanvasLayer],
     drawings: list[DrawingShape],
+    device_links: list[DeviceLink] | None = None,
 ) -> bool:
     """Write a current-layout package to disk."""
     target = Path(path)
@@ -36,10 +38,11 @@ def export_map_package(
         "cameras": cameras,
         "layers": [asdict(layer) for layer in layers],
         "drawings": [asdict(shape) for shape in drawings],
-        "assets": {"background": "", "drawings": {}},
+        "device_links": [asdict(link) for link in device_links or []],
+        "assets": {"background": "", "drawings": {}, "camera_photos": {}},
     }
     with ZipFile(target, "w", ZIP_DEFLATED) as archive:
-        _add_layout_assets(archive, manifest, layout, drawings)
+        _add_layout_assets(archive, manifest, layout, cameras, drawings)
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return True
 
@@ -51,7 +54,7 @@ def import_map_package(path: str | Path, manager: CameraDataManager) -> str | No
         return None
     with ZipFile(source, "r") as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-        if int(manifest.get("schema_version", 0)) != SCHEMA_VERSION:
+        if int(manifest.get("schema_version", 0)) not in {1, 2, SCHEMA_VERSION}:
             return None
         layout = _create_import_layout(manager, manifest)
         asset_dir = Path("assets/maps") / f"package_{layout.id}"
@@ -59,7 +62,8 @@ def import_map_package(path: str | Path, manager: CameraDataManager) -> str | No
         layer_map = _import_layers(manager, manifest.get("layers", []), layout.id)
         _apply_layout_assets(archive, manifest, asset_dir, layout)
         manager.update_layout(layout)
-        _import_cameras(manager, manifest.get("cameras", []), layout.id, layer_map)
+        camera_id_map = _import_cameras(manager, archive, manifest, asset_dir, layout.id, layer_map)
+        _import_device_links(manager, manifest, layout.id, camera_id_map)
         _import_drawings(manager, archive, manifest, asset_dir, layout.id, layer_map)
         return layout.id
 
@@ -68,8 +72,9 @@ def _add_layout_assets(
     archive: ZipFile,
     manifest: dict[str, object],
     layout: MapLayout,
+    cameras: list[dict[str, object]],
     drawings: list[DrawingShape],
-) -> None:
+) -> dict[str, str]:
     assets = manifest["assets"]
     if isinstance(assets, dict) and layout.background_path:
         background = _add_asset(archive, layout.background_path, "background")
@@ -84,6 +89,17 @@ def _add_layout_assets(
         asset_name = _add_asset(archive, shape.image_path, f"drawing_{shape.id}")
         if asset_name:
             drawing_assets[shape.id] = asset_name
+    camera_assets = assets.get("camera_photos") if isinstance(assets, dict) else None
+    if not isinstance(camera_assets, dict):
+        return
+    for camera in cameras:
+        camera_id = str(camera.get("id") or "")
+        photo_path = str(camera.get("location_image_path") or "")
+        if not camera_id or not photo_path:
+            continue
+        asset_name = _add_asset(archive, photo_path, f"camera_{camera_id}")
+        if asset_name:
+            camera_assets[camera_id] = asset_name
 
 
 def _add_asset(archive: ZipFile, file_path: str, prefix: str) -> str:
@@ -144,16 +160,44 @@ def _apply_layout_assets(archive: ZipFile, manifest: dict[str, object], asset_di
 
 def _import_cameras(
     manager: CameraDataManager,
-    rows: list[dict[str, object]],
+    archive: ZipFile,
+    manifest: dict[str, object],
+    asset_dir: Path,
     layout_id: str,
     layer_map: dict[str, str],
 ) -> None:
-    for row in rows:
+    assets = manifest.get("assets", {})
+    camera_assets = assets.get("camera_photos", {}) if isinstance(assets, dict) else {}
+    camera_asset_dir = asset_dir / "camera_photos"
+    camera_asset_dir.mkdir(parents=True, exist_ok=True)
+    camera_id_map: dict[str, str] = {}
+    for row in manifest.get("cameras", []):
         data = dict(row)
+        old_id = str(data.get("id") or "")
         is_placed = bool(data.pop("is_placed", False))
-        data["id"] = _unique_id(str(data.get("id") or "cam"), "cam")
+        data["id"] = _unique_id(old_id or "cam", "cam")
+        camera_id_map[old_id] = str(data["id"])
         data["layer_id"] = layer_map.get(str(data.get("layer_id") or ""), manager.first_layer_id(layout_id))
+        asset_name = camera_assets.get(old_id) if isinstance(camera_assets, dict) else ""
+        if asset_name:
+            data["location_image_path"] = _extract_asset(archive, str(asset_name), camera_asset_dir)
+        elif data.get("location_image_path"):
+            data["location_image_path"] = ""
         manager.add_camera(Camera.from_dict(data), is_placed=is_placed, layout_id=layout_id)
+    return camera_id_map
+
+
+def _import_device_links(
+    manager: CameraDataManager,
+    manifest: dict[str, object],
+    layout_id: str,
+    camera_id_map: dict[str, str],
+) -> None:
+    for row in manifest.get("device_links", []):
+        source_id = camera_id_map.get(str(row.get("source_device_id") or ""))
+        target_id = camera_id_map.get(str(row.get("target_device_id") or ""))
+        if source_id and target_id:
+            manager.add_device_link(source_id, target_id, layout_id)
 
 
 def _import_drawings(

@@ -23,6 +23,14 @@ class MapCanvasSurface:
         self.scene.setSceneRect(0, 0, width, height)
         self._add_grid_items(width, height, grid_size)
 
+    def show_blank_canvas(self) -> None:
+        """Show an empty workspace when no layout exists."""
+        self.remove_background_item()
+        self.remove_grid_items()
+        self.background_item = None
+        self.background_source_pixmap = None
+        self.scene.setSceneRect(0, 0, 0, 0)
+
     def redraw_grid(self, grid_size: int | None = None) -> None:
         """Redraw the grid layer while preserving all other scene items."""
         self.grid_size = grid_size or self.grid_size

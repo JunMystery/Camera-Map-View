@@ -4,6 +4,7 @@ from PyQt6.QtCore import QCoreApplication
 
 from controllers.camera_data_manager import CameraDataManager
 from models.camera_data_model import Camera
+from services.active_ping_service import open_active_ping
 from services.network_ping_service import PingService
 
 
@@ -61,6 +62,10 @@ def test_run_once_emits_status_without_real_network() -> None:
 
 def test_camera_manager_persists_status_and_ping_history() -> None:
     manager = CameraDataManager(":memory:")
+    manager.db.execute(
+        "INSERT OR IGNORE INTO map_layouts (id, name, background_path) VALUES (?, ?, ?)",
+        ("default", "Default Layout", ""),
+    )
     manager.add_camera(Camera("cam", "Lobby", "10.0.0.10"))
 
     assert manager.update_camera_status("cam", True, 3.5)
@@ -92,3 +97,17 @@ def test_ping_service_retries_before_offline() -> None:
 
     assert service.check_camera(Camera("cam", "Lobby", "10.0.0.10")) == (True, 0.0)
     assert attempts == 2
+
+
+def test_active_ping_opens_windows_continuous_ping(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr("services.active_ping_service.platform.system", lambda: "Windows")
+    monkeypatch.setattr("services.active_ping_service.subprocess.Popen", lambda command, creationflags=0: calls.append((command, creationflags)))
+
+    assert open_active_ping("10.0.0.10")
+
+    assert calls[0][0] == ["cmd.exe", "/k", "ping", "-t", "10.0.0.10"]
+
+
+def test_active_ping_rejects_invalid_ip() -> None:
+    assert not open_active_ping("999.0.0.10")

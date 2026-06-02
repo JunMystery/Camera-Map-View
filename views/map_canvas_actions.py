@@ -5,6 +5,7 @@ from typing import Any
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsTextItem
 
+from models.device_catalog import DEVICE_KIND_CAMERA
 from models.drawing_shape_model import DrawingShape
 from utils.geometry import snap_to_grid
 from views.camera_view_item import CameraItem
@@ -140,7 +141,7 @@ class MapCanvasActions:
         """Rotate selected camera viewing directions and emit persistence updates."""
         rotated = 0
         for item in self.scene.selectedItems():
-            if item.data(1) != "camera" or not isinstance(item, CameraItem):
+            if item.data(1) != "camera" or not isinstance(item, CameraItem) or item.camera.device_kind != DEVICE_KIND_CAMERA:
                 continue
             item.camera.rotation = (item.camera.rotation + degrees) % 360
             item.update_tooltip()
@@ -153,6 +154,8 @@ class MapCanvasActions:
 
     def clear_map_items(self) -> None:
         """Remove cameras and annotation items for a layout switch."""
+        self._remove_device_link_items()
+        self.device_links = []
         for item in list(self.scene.items()):
             if item.data(1) in {"camera", "drawing"}:
                 self.pan_item_flags.pop(item, None)
@@ -196,7 +199,8 @@ class MapCanvasActions:
                     label=label,
                     object_type=object_type,
                     visible=item.isVisible(),
-                    locked=self.layer_locked.get(layer_id, False),
+                    locked=bool(item.data(6)),
+                    z_index=int(item.data(7) or 0),
                 )
             )
         return rows
@@ -227,7 +231,7 @@ class MapCanvasActions:
         layer_id = self._resolve_layer_id(layer_id)
         self.layer_locked[layer_id] = locked
         for item in self._items_for_layer(layer_id):
-            self._set_item_locked(item, locked)
+            self._set_item_locked(item, self._item_effective_locked(item))
         self._set_item_interaction_suspended(getattr(self, "item_interaction_suspended", False))
         self.layers_changed.emit()
 
@@ -280,6 +284,42 @@ class MapCanvasActions:
             self.layer_display_names[layer_id] = display_name.strip()
             self.layers_changed.emit()
 
+    def rename_layer_object(self, object_type: str, object_id: str, display_name: str) -> bool:
+        """Rename one object row in the Layers panel without changing layer membership."""
+        display_name = display_name.strip()
+        if not display_name:
+            return False
+        if object_type == "camera":
+            item = self.camera_items.get(object_id)
+            if item is None:
+                return False
+            item.camera.name = display_name
+            item.update_tooltip()
+            item.update()
+        elif object_type == "drawing":
+            target = next((item for item in self.scene.items() if str(item.data(0) or "") == object_id), None)
+            if target is None:
+                return False
+            target.setData(3, display_name)
+        else:
+            return False
+        self.object_renamed.emit(object_type, object_id, display_name)
+        self.layers_changed.emit()
+        return True
+
+    def set_layer_object_locked(self, object_type: str, object_id: str, locked: bool) -> bool:
+        """Lock or unlock one object from the Layers panel."""
+        item = self._find_layer_object_item(object_type, object_id)
+        if item is None:
+            return False
+        item.setData(6, locked)
+        if object_type == "camera" and isinstance(item, CameraItem):
+            item.camera.object_locked = locked
+        self._set_item_locked(item, self._item_effective_locked(item))
+        self.object_locked_changed.emit(object_type, object_id, locked)
+        self.layers_changed.emit()
+        return True
+
     def set_default_layer_names(self, names: dict[str, str]) -> None:
         """Update translated default names without overwriting custom names."""
         for layer_id, name in names.items():
@@ -314,7 +354,38 @@ class MapCanvasActions:
             item.setZValue(-20)
         for index, layer_id in enumerate(self.annotation_layer_order):
             for item in self._items_for_layer(layer_id):
-                item.setZValue(index * 10)
+                item.setZValue(index * 1000 + int(item.data(7) or 0))
+
+    def move_layer_object(self, object_type: str, object_id: str, direction: int) -> bool:
+        """Move one object forward/backward within its layer."""
+        item = self._find_layer_object_item(object_type, object_id)
+        if item is None or direction == 0:
+            return False
+        layer_id = str(item.data(2) or "")
+        siblings = sorted(
+            self._items_for_layer(layer_id),
+            key=lambda candidate: (int(candidate.data(7) or 0), str(candidate.data(0) or "")),
+        )
+        if len(siblings) < 2:
+            return False
+        for index, candidate in enumerate(siblings):
+            candidate.setData(7, index)
+        current_index = siblings.index(item)
+        target_index = current_index + (1 if direction > 0 else -1)
+        if not 0 <= target_index < len(siblings):
+            return False
+        siblings[current_index], siblings[target_index] = siblings[target_index], siblings[current_index]
+        for index, candidate in enumerate(siblings):
+            candidate.setData(7, index)
+            object_type_value = str(candidate.data(1) or "")
+            object_id_value = str(candidate.data(0) or "")
+            if object_type_value == "camera" and isinstance(candidate, CameraItem):
+                object_id_value = candidate.camera.id
+                candidate.camera.z_index = index
+            self.object_z_changed.emit(object_type_value, object_id_value, index)
+        self.apply_layer_z_values()
+        self.layers_changed.emit()
+        return True
 
     def move_selected_items_to_layer(self, layer_id: str) -> int:
         """Move selected cameras and drawings into a target layer."""
@@ -342,14 +413,39 @@ class MapCanvasActions:
     def select_layer_object(self, object_type: str, object_id: str) -> bool:
         """Select one canvas object by id."""
         self.scene.clearSelection()
+        item = self._find_layer_object_item(object_type, object_id)
+        if item is None or self._item_effective_locked(item):
+            return False
+        item.setSelected(True)
+        return True
+
+    def move_layer_object_to_layer(self, object_type: str, object_id: str, layer_id: str) -> bool:
+        """Move one object to another layer."""
+        layer_id = self._resolve_layer_id(layer_id)
+        if layer_id not in self.layer_display_names:
+            return False
+        item = self._find_layer_object_item(object_type, object_id)
+        if item is None:
+            return False
+        item.setData(2, layer_id)
+        if object_type == "camera" and isinstance(item, CameraItem):
+            item.camera.layer_id = layer_id
+            self.object_layer_changed.emit("camera", item.camera.id, layer_id)
+        elif object_type == "drawing":
+            self.object_layer_changed.emit("drawing", object_id, layer_id)
+        else:
+            return False
+        self.apply_layer_z_values()
+        self.layers_changed.emit()
+        return True
+
+    def _find_layer_object_item(self, object_type: str, object_id: str) -> Any | None:
         for item in self.scene.items():
             if object_type == "camera" and isinstance(item, CameraItem) and item.camera.id == object_id:
-                item.setSelected(True)
-                return True
+                return item
             if object_type == "drawing" and str(item.data(0) or "") == object_id:
-                item.setSelected(True)
-                return True
-        return False
+                return item
+        return None
 
     def _selected_text_item(self) -> QGraphicsTextItem | None:
         selected_items = [item for item in self.scene.selectedItems() if item.data(1) == "drawing"]
@@ -370,6 +466,9 @@ class MapCanvasActions:
             line_thickness=font_size,
             label=item.toPlainText(),
             layer_id=str(item.data(2) or ""),
+            display_name=str(item.data(3) or ""),
+            object_locked=bool(item.data(6)),
+            z_index=int(item.data(7) or 0),
         )
 
     def _items_for_layer(self, layer_id: str) -> list[Any]:
@@ -387,7 +486,12 @@ class MapCanvasActions:
         return legacy if legacy in self.layer_display_names else layer_id
 
     def _drawing_label(self, item: Any) -> str:
+        display_name = str(item.data(3) or "").strip()
+        if display_name:
+            return display_name
         object_id = str(item.data(0) or "")
+        if isinstance(item, QGraphicsTextItem) and item.toPlainText().strip():
+            return item.toPlainText().strip()
         item_type = item.__class__.__name__.replace("QGraphics", "").replace("Item", "")
         return f"{item_type} {object_id[-6:]}" if object_id else item_type
 

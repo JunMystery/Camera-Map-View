@@ -16,9 +16,10 @@ class DrawingShapeOperations:
             self.db.execute(
                 """
                 INSERT INTO drawing_shapes (
-                    id, layout_id, shape_type, points, color, line_thickness, label, image_path, layer_id
+                    id, layout_id, shape_type, points, color, line_thickness, label, image_path,
+                    layer_id, display_name, object_locked, z_index
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     shape.id,
@@ -30,6 +31,9 @@ class DrawingShapeOperations:
                     shape.label,
                     shape.image_path,
                     self._resolved_shape_layer_id(shape.layer_id, layout_id),
+                    shape.display_name,
+                    int(shape.object_locked),
+                    int(shape.z_index),
                 ),
             )
             return True
@@ -46,7 +50,8 @@ class DrawingShapeOperations:
         cursor = self.db.execute(
             """
             UPDATE drawing_shapes
-            SET points = ?, color = ?, line_thickness = ?, label = ?, image_path = ?, layer_id = ?
+            SET points = ?, color = ?, line_thickness = ?, label = ?, image_path = ?,
+                layer_id = ?, display_name = ?, object_locked = ?, z_index = ?
             WHERE id = ? AND layout_id = ?
             """,
             (
@@ -56,9 +61,24 @@ class DrawingShapeOperations:
                 shape.label,
                 shape.image_path,
                 self._resolved_shape_layer_id(shape.layer_id, layout_id),
+                shape.display_name,
+                int(shape.object_locked),
+                int(shape.z_index),
                 shape.id,
                 layout_id,
             ),
+        )
+        return cursor.rowcount > 0
+
+    def update_drawing_shape_display_name(self, shape_id: str, display_name: str, layout_id: str = "default") -> bool:
+        """Persist only the layer-panel display name for one drawing object."""
+        cursor = self.db.execute(
+            """
+            UPDATE drawing_shapes
+            SET display_name = ?
+            WHERE id = ? AND layout_id = ?
+            """,
+            (display_name, shape_id, layout_id),
         )
         return cursor.rowcount > 0
 
@@ -93,4 +113,7 @@ class DrawingShapeOperations:
             label=row["label"] or "",
             image_path=row["image_path"] or "",
             layer_id=row["layer_id"] or "",
+            display_name=row["display_name"] or "",
+            object_locked=bool(row["object_locked"]),
+            z_index=int(row["z_index"] or 0),
         )

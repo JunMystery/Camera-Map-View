@@ -35,6 +35,7 @@ class AppPackageActions:
             self._camera_package_rows(),
             self.camera_manager.get_layers(self.current_layout_id),
             self.camera_manager.get_drawing_shapes(self.current_layout_id),
+            self.camera_manager.get_device_links(self.current_layout_id),
         ):
             QMessageBox.critical(self, t("error.package.title"), t("error.package.body"))
             return

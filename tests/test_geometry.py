@@ -2,17 +2,23 @@
 
 from PyQt6.QtCore import QByteArray, QMimeData, QPointF, Qt
 from PyQt6.QtGui import QImage
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QGraphicsView
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QGraphicsView, QMenu
 
 from models.camera_data_model import Camera
 from models.canvas_layer_model import CanvasLayer
+from models.device_link_model import DeviceLink
+from models.device_catalog import DEVICE_KIND_PC, DEVICE_KIND_SERVER, DEVICE_KIND_SWITCH
 from models.drawing_shape_model import DrawingShape
 from utils.geometry import snap_to_grid
+from utils.image_assets import CAMERA_PHOTO_MAX_EDGE, import_camera_location_image
 from config.i18n import set_language
+from views.camera_location_image_dialog import CameraLocationImageDialog
 from views.camera_view_dialog import CameraPropertiesDialog
+from views.device_connections_dialog import DeviceConnectionsDialog
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
 from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
+from views.tool_icons import device_icon, tool_icon
 
 
 def test_snap_to_grid_rounds_to_nearest_intersection() -> None:
@@ -185,6 +191,86 @@ def test_camera_dialog_disables_save_for_invalid_input() -> None:
     app.processEvents()
 
 
+def test_canvas_wheel_zoom_accepts_event_in_modes() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+
+    for mode in (DrawingMode.PAN, DrawingMode.SELECT, DrawingMode.LINE):
+        canvas.set_drawing_mode(mode)
+        before = canvas.transform().m11()
+        event = _WheelEvent(120)
+        canvas.wheelEvent(event)
+
+        assert event.accepted
+        assert canvas.transform().m11() > before
+
+    app.processEvents()
+
+
+def test_canvas_device_links_follow_downstream_and_single_upstream_path() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    devices = [
+        Camera("router", "Router", "", position_x=300.0, position_y=0.0, device_kind="Router", ping_enabled=False),
+        Camera("switch", "Switch", "", position_x=200.0, position_y=0.0, device_kind=DEVICE_KIND_SWITCH, ping_enabled=False),
+        Camera("ap", "AP", "", position_x=100.0, position_y=0.0, device_kind="AP", ping_enabled=False),
+        Camera("cam", "Camera", "10.0.0.10", position_x=0.0, position_y=0.0),
+        Camera("pc", "PC", "", position_x=200.0, position_y=100.0, device_kind=DEVICE_KIND_PC, ping_enabled=False),
+    ]
+    for device in devices:
+        canvas.add_camera_item(device)
+    links = [
+        DeviceLink("link_cam_ap", "default", "cam", "ap"),
+        DeviceLink("link_ap_switch", "default", "ap", "switch"),
+        DeviceLink("link_pc_switch", "default", "pc", "switch"),
+        DeviceLink("link_switch_router", "default", "switch", "router"),
+    ]
+    canvas.set_device_links(links)
+
+    canvas.scene.clearSelection()
+    canvas.camera_items["cam"].setSelected(True)
+    assert {(item.link.source_device_id, item.link.target_device_id) for item in canvas.device_link_items} == {
+        ("cam", "ap"),
+        ("ap", "switch"),
+        ("switch", "router"),
+    }
+
+    canvas.scene.clearSelection()
+    canvas.camera_items["ap"].setSelected(True)
+    assert {(item.link.source_device_id, item.link.target_device_id) for item in canvas.device_link_items} == {
+        ("cam", "ap"),
+        ("ap", "switch"),
+        ("switch", "router"),
+    }
+
+    canvas.scene.clearSelection()
+    canvas.camera_items["router"].setSelected(True)
+    assert {(item.link.source_device_id, item.link.target_device_id) for item in canvas.device_link_items} == {
+        ("cam", "ap"),
+        ("ap", "switch"),
+        ("pc", "switch"),
+        ("switch", "router"),
+    }
+    app.processEvents()
+
+
+def test_device_dialog_uses_device_name_label_and_preserves_rotation() -> None:
+    app = QApplication.instance() or QApplication([])
+    dialog = CameraPropertiesDialog(Camera("cam", "Lobby", "10.0.0.10", rotation=123.0))
+
+    assert dialog.name_label.text() == "Tên thiết bị"
+    assert not hasattr(dialog, "rotation_slider")
+    assert not dialog.fov_input.isHidden()
+    assert [dialog.fov_input.itemData(index) for index in range(dialog.fov_input.count())] == [80, 180, 360]
+    assert dialog.get_camera().rotation == 123.0
+    assert dialog.get_camera().fov_degrees == 80
+
+    dialog.name_input.setText("")
+    assert dialog.error_label.text() == "Tên thiết bị không được để trống."
+    app.processEvents()
+
+
 def test_camera_dialog_translates_camera_type_labels_without_changing_value() -> None:
     app = QApplication.instance() or QApplication([])
     set_language("jp")
@@ -194,6 +280,159 @@ def test_camera_dialog_translates_camera_type_labels_without_changing_value() ->
     assert dialog.get_camera().camera_type == "Fixed"
 
     set_language("vi")
+    app.processEvents()
+
+
+def test_device_dialog_updates_variant_presets_and_allows_blank_non_camera_ip() -> None:
+    app = QApplication.instance() or QApplication([])
+    dialog = CameraPropertiesDialog(Camera("device", "", "192.168.1.1"))
+
+    server_index = dialog.kind_input.findData(DEVICE_KIND_SERVER)
+    dialog.kind_input.setCurrentIndex(server_index)
+    dialog.name_input.setText("Server A")
+
+    assert dialog.ip_input.text() == ""
+    assert dialog.ping_input.isChecked() is False
+    assert dialog.variant_input.findData("Rack") >= 0
+    assert dialog.fov_input.isHidden()
+    assert dialog.button_box.button(QDialogButtonBox.StandardButton.Save).isEnabled()
+    app.processEvents()
+
+
+def test_device_dialog_pc_variants_are_available() -> None:
+    app = QApplication.instance() or QApplication([])
+    dialog = CameraPropertiesDialog(Camera("device", "", "192.168.1.1"))
+
+    pc_index = dialog.kind_input.findData(DEVICE_KIND_PC)
+    dialog.kind_input.setCurrentIndex(pc_index)
+    dialog.name_input.setText("Laptop A")
+
+    assert pc_index >= 0
+    assert [dialog.variant_input.itemData(index) for index in range(dialog.variant_input.count())] == [
+        "PC",
+        "Laptop",
+        "Workstation",
+    ]
+    assert dialog.ip_input.text() == ""
+    assert dialog.button_box.button(QDialogButtonBox.StandardButton.Save).isEnabled()
+    app.processEvents()
+
+
+def test_device_dialog_link_search_preserves_checked_and_shows_incoming() -> None:
+    app = QApplication.instance() or QApplication([])
+    ap = Camera("ap", "AP 1", "", device_kind="AP", variant="Indoor AP", ping_enabled=False)
+    server = Camera("server", "Server A", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    camera_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    camera_b = Camera("cam_b", "Camera B", "10.0.0.11")
+    properties = CameraPropertiesDialog(ap, None, [ap, server, camera_a, camera_b], ["server"], ["cam_a", "cam_b"])
+    dialog = DeviceConnectionsDialog(ap, [server, camera_a, camera_b], set(properties.get_linked_device_ids()), {"cam_a", "cam_b"})
+
+    assert not hasattr(properties, "link_list")
+    assert not hasattr(properties, "incoming_link_list")
+    assert properties.manage_connections_button.text() == "Quản lý kết nối"
+    assert dialog.get_linked_device_ids() == ["server"]
+    assert dialog.incoming_list.count() == 2
+
+    dialog.search_input.setText("camera a")
+    assert dialog.incoming_list.item(0).isHidden() is False
+    assert dialog.incoming_list.item(1).isHidden() is True
+
+    dialog.search_input.clear()
+    for index in range(dialog.outgoing_list.count()):
+        item = dialog.outgoing_list.item(index)
+        if item.data(Qt.ItemDataRole.UserRole) == "cam_a":
+            item.setCheckState(Qt.CheckState.Checked)
+
+    dialog.search_input.setText("server")
+    dialog.search_input.clear()
+    assert dialog.get_linked_device_ids() == ["server", "cam_a"]
+    app.processEvents()
+
+
+def test_tool_icons_load_assets_and_fallback() -> None:
+    app = QApplication.instance() or QApplication([])
+
+    assert not tool_icon("add").isNull()
+    assert not device_icon(DEVICE_KIND_SERVER).isNull()
+    assert not device_icon("Unknown Device").isNull()
+    app.processEvents()
+
+
+def test_camera_dialog_preserves_location_image_until_save(tmp_path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    old_photo = tmp_path / "old.jpg"
+    new_photo = tmp_path / "new.png"
+    image = QImage(40, 30, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(old_photo))
+    assert image.save(str(new_photo))
+    compressed = tmp_path / "compressed.jpg"
+    assert image.save(str(compressed))
+    monkeypatch.setattr("views.camera_view_dialog.import_camera_location_image", lambda source: (str(compressed), 40, 30))
+    dialog = CameraPropertiesDialog(Camera("cam", "Lobby", "10.0.0.10", location_image_path=str(old_photo)))
+
+    dialog.pending_location_source = str(new_photo)
+    dialog.location_image_path = str(new_photo)
+    updated = dialog.get_camera()
+
+    assert updated.location_image_path.endswith(".jpg")
+    assert updated.location_image_path != str(old_photo)
+    assert updated.location_image_path == str(compressed)
+    app.processEvents()
+
+
+def test_import_camera_location_image_compresses_to_jpg(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "source.png"
+    target_dir = tmp_path / "photos"
+    image = QImage(2400, 1200, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(source))
+
+    imported = import_camera_location_image(str(source), target_dir)
+
+    assert imported is not None
+    path, width, height = imported
+    assert path.endswith(".jpg")
+    assert max(width, height) == CAMERA_PHOTO_MAX_EDGE
+    assert QImage(path).width() == CAMERA_PHOTO_MAX_EDGE
+    app.processEvents()
+
+
+def test_camera_context_menu_order(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+    captured = []
+
+    def capture_exec(menu: QMenu, _pos: object) -> None:
+        captured.extend(action.text() for action in menu.actions())
+
+    monkeypatch.setattr(QMenu, "exec", capture_exec)
+    item.contextMenuEvent(_ContextMenuEvent())
+
+    assert captured == ["Ảnh vị trí", "Ping", "Chỉnh sửa thông số"]
+    app.processEvents()
+
+
+def test_location_image_dialog_loads_and_zooms(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    image_path = tmp_path / "photo.jpg"
+    image = QImage(120, 80, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+    dialog = CameraLocationImageDialog(str(image_path), "Lobby")
+
+    assert dialog.pixmap_item is not None
+    assert dialog.view.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
+    before = dialog.zoom_factor
+    dialog.zoom_in()
+    assert dialog.zoom_factor > before
+    dialog.zoom_out()
+    wheel_before = dialog.zoom_factor
+    dialog.view.wheelEvent(_WheelEvent(120))
+    assert dialog.zoom_factor > wheel_before
+    dialog.view.wheelEvent(_WheelEvent(-120))
     app.processEvents()
 
 
@@ -262,6 +501,45 @@ def test_canvas_layer_visibility_lock_and_selection() -> None:
     canvas.set_layer_locked(layer_id, False)
     assert canvas.select_layer_items(layer_id) == 2
     assert camera_item.isSelected()
+    app.processEvents()
+
+
+def test_canvas_object_lock_and_z_order_updates_state() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    camera_item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10", z_index=0))
+    drawing_item = canvas.add_drawing_shape(DrawingShape("shape_test", "Line", [0.0, 0.0, 40.0, 40.0], z_index=1))
+    assert drawing_item is not None
+    locks = []
+    z_changes = []
+    canvas.object_locked_changed.connect(lambda object_type, object_id, locked: locks.append((object_type, object_id, locked)))
+    canvas.object_z_changed.connect(lambda object_type, object_id, z_index: z_changes.append((object_type, object_id, z_index)))
+
+    assert canvas.set_layer_object_locked("camera", "cam_test", True)
+    assert locks[-1] == ("camera", "cam_test", True)
+    assert not camera_item.flags() & camera_item.GraphicsItemFlag.ItemIsMovable
+    assert canvas.select_layer_object("camera", "cam_test") is False
+
+    assert canvas.move_layer_object("camera", "cam_test", 1)
+    assert int(camera_item.data(7) or 0) == 1
+    assert int(drawing_item.data(7) or 0) == 0
+    assert ("camera", "cam_test", 1) in z_changes
+    app.processEvents()
+
+
+def test_rectangle_and_zone_hit_test_only_uses_border() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    rectangle = canvas.add_drawing_shape(DrawingShape("rect_test", "Rectangle", [0.0, 0.0, 100.0, 100.0]))
+    zone = canvas.add_drawing_shape(DrawingShape("zone_test", "Polygon", [0.0, 0.0, 100.0, 0.0, 100.0, 100.0, 0.0, 100.0]))
+
+    assert rectangle is not None
+    assert zone is not None
+    assert rectangle.shape().contains(QPointF(0.0, 50.0))
+    assert not rectangle.shape().contains(QPointF(50.0, 50.0))
+    assert zone.shape().contains(QPointF(100.0, 50.0))
+    assert not zone.shape().contains(QPointF(50.0, 50.0))
     app.processEvents()
 
 
@@ -414,6 +692,23 @@ class _KeyEvent:
 
     def isAutoRepeat(self) -> bool:
         return False
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class _ContextMenuEvent:
+    def screenPos(self) -> QPointF:
+        return QPointF(0, 0)
+
+
+class _WheelEvent:
+    def __init__(self, delta_y: int) -> None:
+        self._delta_y = delta_y
+        self.accepted = False
+
+    def angleDelta(self) -> QPointF:
+        return QPointF(0, self._delta_y)
 
     def accept(self) -> None:
         self.accepted = True

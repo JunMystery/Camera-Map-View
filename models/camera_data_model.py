@@ -24,6 +24,13 @@ class Camera:
     zone: str = ""
     dvr_origin: str = ""
     layer_id: str = ""
+    location_image_path: str = ""
+    device_kind: str = "Camera"
+    variant: str = ""
+    ping_enabled: bool = True
+    fov_degrees: int = 80
+    object_locked: bool = False
+    z_index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the camera to a serializable dictionary."""
@@ -40,3 +47,7 @@ class Camera:
         if last_check and isinstance(last_check, str):
             data_copy["last_check"] = datetime.fromisoformat(last_check)
         return cls(**data_copy)
+
+    def effective_variant(self) -> str:
+        """Return the selected device variant with legacy camera type fallback."""
+        return self.variant or self.camera_type

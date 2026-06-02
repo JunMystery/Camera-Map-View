@@ -62,8 +62,27 @@ class CameraDbManager:
                 zone TEXT DEFAULT '',
                 dvr_origin TEXT DEFAULT '',
                 layer_id TEXT DEFAULT '',
+                location_image_path TEXT DEFAULT '',
+                device_kind TEXT DEFAULT 'Camera',
+                variant TEXT DEFAULT '',
+                ping_enabled INTEGER DEFAULT 1,
+                fov_degrees INTEGER DEFAULT 80,
+                object_locked INTEGER DEFAULT 0,
+                z_index INTEGER DEFAULT 0,
                 is_placed INTEGER DEFAULT 0,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS device_links (
+                id TEXT PRIMARY KEY,
+                layout_id TEXT NOT NULL DEFAULT 'default',
+                source_device_id TEXT NOT NULL,
+                target_device_id TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE,
+                FOREIGN KEY (source_device_id) REFERENCES cameras(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_device_id) REFERENCES cameras(id) ON DELETE CASCADE,
+                UNIQUE(layout_id, source_device_id, target_device_id)
             );
 
             CREATE TABLE IF NOT EXISTS canvas_layers (
@@ -88,6 +107,9 @@ class CameraDbManager:
                 label TEXT DEFAULT '',
                 image_path TEXT DEFAULT '',
                 layer_id TEXT DEFAULT '',
+                display_name TEXT DEFAULT '',
+                object_locked INTEGER DEFAULT 0,
+                z_index INTEGER DEFAULT 0,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
             );
 
@@ -102,22 +124,15 @@ class CameraDbManager:
 
             CREATE INDEX IF NOT EXISTS idx_cameras_layout_placed
                 ON cameras(layout_id, is_placed);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_cameras_layout_ip_address
-                ON cameras(layout_id, ip_address);
             CREATE INDEX IF NOT EXISTS idx_drawing_shapes_layout
                 ON drawing_shapes(layout_id);
             CREATE INDEX IF NOT EXISTS idx_canvas_layers_layout_position
                 ON canvas_layers(layout_id, position);
+            CREATE INDEX IF NOT EXISTS idx_device_links_layout
+                ON device_links(layout_id);
             CREATE INDEX IF NOT EXISTS idx_ping_history_camera_time
                 ON ping_history(camera_id, timestamp);
             """
-        )
-        self.execute(
-            """
-            INSERT OR IGNORE INTO map_layouts (id, name, background_path)
-            VALUES (?, ?, ?)
-            """,
-            ("default", "Default Layout", ""),
         )
         self._add_missing_columns(
             "cameras",
@@ -126,9 +141,25 @@ class CameraDbManager:
                 "dvr_origin": "TEXT DEFAULT ''",
                 "display_scale": "REAL DEFAULT 1.0",
                 "layer_id": "TEXT DEFAULT ''",
+                "location_image_path": "TEXT DEFAULT ''",
+                "device_kind": "TEXT DEFAULT 'Camera'",
+                "variant": "TEXT DEFAULT ''",
+                "ping_enabled": "INTEGER DEFAULT 1",
+                "fov_degrees": "INTEGER DEFAULT 80",
+                "object_locked": "INTEGER DEFAULT 0",
+                "z_index": "INTEGER DEFAULT 0",
             },
         )
-        self._add_missing_columns("drawing_shapes", {"image_path": "TEXT DEFAULT ''", "layer_id": "TEXT DEFAULT ''"})
+        self._add_missing_columns(
+            "drawing_shapes",
+            {
+                "image_path": "TEXT DEFAULT ''",
+                "layer_id": "TEXT DEFAULT ''",
+                "display_name": "TEXT DEFAULT ''",
+                "object_locked": "INTEGER DEFAULT 0",
+                "z_index": "INTEGER DEFAULT 0",
+            },
+        )
         self._add_missing_columns(
             "map_layouts",
             {
@@ -138,6 +169,14 @@ class CameraDbManager:
             },
         )
         self.execute("DROP INDEX IF EXISTS idx_cameras_ip_address")
+        self.execute("DROP INDEX IF EXISTS idx_cameras_layout_ip_address")
+        self.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_cameras_layout_ip_address_present
+            ON cameras(layout_id, ip_address)
+            WHERE COALESCE(ip_address, '') <> ''
+            """
+        )
 
     def _add_missing_columns(self, table_name: str, columns: dict[str, str]) -> None:
         """Add lightweight migration columns for existing local databases."""

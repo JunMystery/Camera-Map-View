@@ -2,7 +2,7 @@
 
 import os
 
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QColorDialog, QFileDialog, QMainWindow, QMessageBox, QStatusBar, QVBoxLayout, QWidget
 
 from config.i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, get_language, set_language, t
@@ -36,7 +36,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
         self.map_canvas = MapCanvas(self)
-        self.current_layout_id = "default"
+        self.current_layout_id = ""
         self.current_background_path = ""
         self.settings = load_app_settings()
         self.main_layout.addWidget(self.map_canvas)
@@ -49,9 +49,12 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.camera_manager = CameraDataManager()
-        layout = self.camera_manager.get_layout(self.current_layout_id)
-        if layout is not None:
-            self.apply_layout_to_canvas(layout)
+        layouts = self.camera_manager.get_layouts()
+        if layouts:
+            self.current_layout_id = layouts[0].id
+            self.apply_layout_to_canvas(layouts[0])
+        else:
+            self.map_canvas.show_blank_canvas()
         self.init_layouts_dock()
         self.init_layers_dock()
         self.add_widget_reopen_actions()
@@ -73,7 +76,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.refresh_ping_cameras,
             self.refresh_status_dashboard,
         )
-        self.camera_controller.load_cameras()
+        self.camera_controller.load_cameras(self.current_layout_id)
         self.layouts_panel.layout_selected.connect(self.switch_layout)
         self.layouts_panel.layout_add_requested.connect(self.add_layout)
         self.layouts_panel.layout_rename_requested.connect(self.rename_layout)
@@ -85,6 +88,8 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.ping_service.status_updated.connect(self.camera_controller.handle_camera_status_updated)
         self.refresh_ping_cameras()
         self.ping_service.start()
+        if not self.current_layout_id:
+            self.enter_blank_layout_state()
 
     def init_menus_and_toolbars(self) -> None:
         self.open_action = QAction(self)
@@ -100,6 +105,14 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
         self.settings_action = QAction(self)
         self.settings_action.triggered.connect(self.open_settings)
+
+        self.undo_action = QAction(self)
+        self.undo_action.setShortcuts(QKeySequence.StandardKey.Undo)
+        self.undo_action.triggered.connect(self.undo_last_action)
+
+        self.redo_action = QAction(self)
+        self.redo_action.setShortcuts(QKeySequence.StandardKey.Redo)
+        self.redo_action.triggered.connect(self.redo_last_action)
 
         self.import_package_action = QAction(self)
         self.import_package_action.triggered.connect(self.import_map_package_file)
@@ -149,6 +162,11 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.draw_freehand_action.setObjectName("draw_freehand")
         self.draw_freehand_action.setCheckable(True)
         self.draw_freehand_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.FREEHAND))
+
+        self.link_device_action = QAction(self)
+        self.link_device_action.setObjectName("link_device")
+        self.link_device_action.setCheckable(True)
+        self.link_device_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.LINK))
 
         self.add_text_action = QAction(self)
         self.add_text_action.setObjectName("add_text")
@@ -203,6 +221,10 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.file_menu.addSeparator()
         self.file_menu.addAction(self.exit_action)
 
+        self.action_menu = self.menuBar().addMenu("")
+        self.action_menu.addAction(self.undo_action)
+        self.action_menu.addAction(self.redo_action)
+
         self.view_menu = self.menuBar().addMenu("")
         self.view_menu.addAction(self.zoom_in_action)
         self.view_menu.addAction(self.zoom_out_action)
@@ -225,6 +247,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             DrawingMode.RECTANGLE: self.draw_rectangle_action,
             DrawingMode.ZONE: self.draw_zone_action,
             DrawingMode.FREEHAND: self.draw_freehand_action,
+            DrawingMode.LINK: self.link_device_action,
         }
         for action_mode, action in mode_actions.items():
             action.setChecked(action_mode == mode)
@@ -233,6 +256,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
     def add_text_annotation(self) -> None:
         """Add or edit a text annotation."""
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         selected_text = self.map_canvas.selected_text_annotation()
         dialog = TextAnnotationDialog(
             text=selected_text.label if selected_text is not None else "",
@@ -254,6 +280,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
     def insert_png_annotation(self) -> None:
         """Import and add a compressed PNG annotation."""
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         file_path, _ = QFileDialog.getOpenFileName(self, t("dialog.choose_png.title"), "", t("dialog.choose_png.filter"))
         if not file_path:
             return
@@ -267,22 +296,50 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
     def choose_drawing_color(self) -> None:
         """Open a color picker for map drawings."""
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         color = QColorDialog.getColor(parent=self, title=t("dialog.choose_color.title"))
         if color.isValid():
             self.map_canvas.set_drawing_color(color.name())
 
     def delete_selected_drawings(self) -> None:
         """Delete selected drawable items."""
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         count = self.map_canvas.delete_selected_drawings()
         if count:
             self.status_bar.showMessage(t("status.drawing_deleted", count=count), 5000)
 
     def rotate_selected_cameras(self) -> None:
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         count = self.map_canvas.rotate_selected_cameras(15)
         if count:
             self.status_bar.showMessage(t("status.camera_rotated", count=count), 5000)
 
+    def undo_last_action(self) -> None:
+        """Trigger the canvas undo hook when available."""
+        undo = getattr(self.map_canvas, "undo", None)
+        if callable(undo):
+            undo()
+            return
+        self.status_bar.showMessage(t("status.undo_unavailable"), 5000)
+
+    def redo_last_action(self) -> None:
+        """Trigger the canvas redo hook when available."""
+        redo = getattr(self.map_canvas, "redo", None)
+        if callable(redo):
+            redo()
+            return
+        self.status_bar.showMessage(t("status.redo_unavailable"), 5000)
+
     def select_background_image(self) -> None:
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             t("dialog.choose_map.title"),
@@ -306,6 +363,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         )
 
     def unload_background_image(self) -> None:
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
         if not self._confirm(t("dialog.confirm_unload_map.title"), t("dialog.confirm_unload_map.body")):
             return
         self.map_canvas.unload_background_image()
@@ -336,9 +396,48 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
     def refresh_status_dashboard(self) -> None:
         cameras = self.camera_manager.get_all_cameras(self.current_layout_id)
-        online = sum(1 for camera in cameras if camera.status)
+        monitored = [camera for camera in cameras if camera.ping_enabled and camera.ip_address]
+        online = sum(1 for camera in monitored if camera.status)
         total = len(cameras)
-        self.status_dashboard.update_counts(total, online, total - online)
+        self.status_dashboard.update_counts(total, online, len(monitored) - online)
+
+    def _sync_layout_dependent_actions(self) -> None:
+        has_layout = bool(getattr(self, "current_layout_id", ""))
+        for action_name in (
+            "open_action",
+            "unload_map_action",
+            "export_package_action",
+            "draw_line_action",
+            "draw_rectangle_action",
+            "draw_zone_action",
+            "draw_freehand_action",
+            "link_device_action",
+            "add_text_action",
+            "insert_png_action",
+            "choose_color_action",
+            "delete_selected_action",
+            "rotate_camera_action",
+            "grid_action",
+        ):
+            action = getattr(self, action_name, None)
+            if action is not None:
+                action.setEnabled(has_layout)
+        for button_name in (
+            "rename_layout_button",
+            "delete_layout_button",
+            "add_button",
+            "edit_button",
+            "delete_button",
+            "import_button",
+            "export_button",
+        ):
+            button = getattr(getattr(self, "camera_panel", None), button_name, None)
+            if button is not None:
+                button.setEnabled(has_layout)
+        if hasattr(self, "layers_panel"):
+            self.layers_panel.setEnabled(has_layout)
+        if hasattr(self, "drawing_tools_panel"):
+            self.drawing_tools_panel.setEnabled(has_layout)
 
     def set_language(self, language: str) -> None:
         set_language(language); self.retranslate()
@@ -347,16 +446,16 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.setWindowTitle(t("app.title"))
         if hasattr(self, "dock"):
             self.dock.setWindowTitle(t("dock.control_panel"))
-            self.control_dock_title.set_title(t("dock.control_panel"))
         if hasattr(self, "layers_dock"):
             self.layers_dock.setWindowTitle(t("dock.layers"))
-            self.layers_dock_title.set_title(t("dock.layers"))
         if hasattr(self, "open_action"):
             self.open_action.setText(t("action.open_map"))
             self.unload_map_action.setText(t("action.unload_map"))
             self.import_package_action.setText(t("action.import_package"))
             self.export_package_action.setText(t("action.export_package"))
             self.exit_action.setText(t("action.exit"))
+            self.undo_action.setText(t("action.undo"))
+            self.redo_action.setText(t("action.redo"))
             self.zoom_in_action.setText(t("action.zoom_in"))
             self.zoom_out_action.setText(t("action.zoom_out"))
             self.zoom_fit_action.setText(t("action.zoom_fit"))
@@ -367,6 +466,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.draw_rectangle_action.setText(t("action.draw_rectangle"))
             self.draw_zone_action.setText(t("action.draw_zone"))
             self.draw_freehand_action.setText(t("action.draw_freehand"))
+            self.link_device_action.setText(t("action.link_device"))
             self.add_text_action.setText(t("action.add_text"))
             self.insert_png_action.setText(t("action.insert_png"))
             self.choose_color_action.setText(t("action.choose_color"))
@@ -378,6 +478,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.info_actions["ip"].setText(t("action.show_ip"))
             self.info_actions["dvr"].setText(t("action.show_dvr"))
             self.file_menu.setTitle(t("menu.file"))
+            self.action_menu.setTitle(t("menu.action"))
             self.view_menu.setTitle(t("menu.view"))
             self.language_menu.setTitle(t("menu.language"))
             if hasattr(self, "drawing_tools_view_action"):

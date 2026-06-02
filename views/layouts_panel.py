@@ -48,7 +48,7 @@ class LayoutsPanel(QWidget):
 
     def current_layout_id(self) -> str:
         """Return selected layout id."""
-        return str(self.combo.currentData() or "default")
+        return str(self.combo.currentData() or "")
 
     def retranslate(self) -> None:
         """Refresh labels."""

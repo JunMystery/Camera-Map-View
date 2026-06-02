@@ -40,6 +40,14 @@ def app_stylesheet(light_theme: bool) -> str:
             QMenu::item:selected {{
                 background: #e5e7eb;
             }}
+            QMenu::item {{
+                padding: 6px 76px 6px 16px;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {LIGHT_BORDER};
+                margin: 4px 8px;
+            }}
             QDockWidget::title {{
                 background: #e5e7eb;
                 color: {LIGHT_TEXT};
@@ -85,6 +93,14 @@ def app_stylesheet(light_theme: bool) -> str:
         }}
         QMenu::item:selected {{
             background: {DARK_HOVER};
+        }}
+        QMenu::item {{
+            padding: 6px 76px 6px 16px;
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: {DARK_BORDER};
+            margin: 4px 8px;
         }}
         QToolBar, QStatusBar {{
             background: {DARK_PANEL};

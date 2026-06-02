@@ -110,14 +110,70 @@ class CameraLayerOperations:
         except sqlite3.IntegrityError:
             return False
 
-    def update_camera_layer(self, camera_id: str, layer_id: str) -> bool:
+    def update_camera_layer(self, camera_id: str, layer_id: str, layout_id: str | None = None) -> bool:
         """Persist a camera layer assignment."""
-        cursor = self.db.execute("UPDATE cameras SET layer_id = ? WHERE id = ?", (layer_id, camera_id))
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE cameras SET layer_id = ? WHERE id = ?", (layer_id, camera_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE cameras SET layer_id = ? WHERE id = ? AND layout_id = ?",
+                (layer_id, camera_id, layout_id),
+            )
         return cursor.rowcount > 0
 
-    def update_drawing_shape_layer(self, shape_id: str, layer_id: str) -> bool:
+    def update_drawing_shape_layer(self, shape_id: str, layer_id: str, layout_id: str | None = None) -> bool:
         """Persist a drawing layer assignment."""
-        cursor = self.db.execute("UPDATE drawing_shapes SET layer_id = ? WHERE id = ?", (layer_id, shape_id))
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE drawing_shapes SET layer_id = ? WHERE id = ?", (layer_id, shape_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE drawing_shapes SET layer_id = ? WHERE id = ? AND layout_id = ?",
+                (layer_id, shape_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_camera_object_locked(self, camera_id: str, locked: bool, layout_id: str | None = None) -> bool:
+        """Persist a camera object lock flag."""
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE cameras SET object_locked = ? WHERE id = ?", (int(locked), camera_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE cameras SET object_locked = ? WHERE id = ? AND layout_id = ?",
+                (int(locked), camera_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_drawing_shape_object_locked(self, shape_id: str, locked: bool, layout_id: str | None = None) -> bool:
+        """Persist a drawing object lock flag."""
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE drawing_shapes SET object_locked = ? WHERE id = ?", (int(locked), shape_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE drawing_shapes SET object_locked = ? WHERE id = ? AND layout_id = ?",
+                (int(locked), shape_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_camera_z_index(self, camera_id: str, z_index: int, layout_id: str | None = None) -> bool:
+        """Persist a camera object z-index."""
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE cameras SET z_index = ? WHERE id = ?", (z_index, camera_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE cameras SET z_index = ? WHERE id = ? AND layout_id = ?",
+                (z_index, camera_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_drawing_shape_z_index(self, shape_id: str, z_index: int, layout_id: str | None = None) -> bool:
+        """Persist a drawing object z-index."""
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE drawing_shapes SET z_index = ? WHERE id = ?", (z_index, shape_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE drawing_shapes SET z_index = ? WHERE id = ? AND layout_id = ?",
+                (z_index, shape_id, layout_id),
+            )
         return cursor.rowcount > 0
 
     def layer_object_counts(self, layout_id: str = "default") -> dict[str, int]:

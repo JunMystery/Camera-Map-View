@@ -2,7 +2,7 @@
 
 ## Overview
 
-Camera Map View is a PyQt6 desktop application for designing and maintaining camera placement diagrams on one or more map layouts. It supports camera inventory management, placement on a canvas, drawing/text/image annotations, Photoshop-like layers, network status checks, dark/light themes, and portable `.cmvmap` package export/import.
+Camera Map View is a PyQt6 desktop application for designing and maintaining device placement diagrams on one or more map layouts. It supports camera and network-device inventory management, placement on a canvas, topology links, drawing/text/image annotations, Photoshop-like layers, network status checks, dark/light themes, and portable `.cmvmap` package export/import.
 
 The project follows an MVC-style structure:
 
@@ -22,11 +22,11 @@ The entrypoint is `main.py`, which creates `views.app_view_window.MainWindow`.
 Current UI composition:
 
 - **Menu bar:** File, View, Language, and a top-level Settings action.
-- **Control Panel:** fixed left dock that combines layout selection/CRUD and camera inventory/CSV actions.
-- **MapCanvas:** central `QGraphicsView` for background map, grid, pan/zoom, camera items, drawing annotations, and drag/drop placement.
+- **Control Panel:** fixed left dock that combines layout selection/CRUD and device inventory/CSV actions.
+- **MapCanvas:** central `QGraphicsView` for background map, grid, pan/zoom, device items, topology-link overlays, drawing annotations, and drag/drop placement.
 - **Drawing Tools:** fixed floating child widget anchored near the canvas. It can collapse to one button and cannot be dragged into a separate window.
 - **Layers Panel:** docked layer stack with expandable layer groups and nested object rows.
-- **Status Dashboard:** total/online/offline camera counts.
+- **Status Dashboard:** total devices plus monitored online/offline counts.
 - **Settings Dialog:** horizontal tabs for network, canvas, and appearance settings.
 
 There is no secondary toolbar under the menu bar. Drawing and annotation commands live in the floating Drawing Tools panel and menu actions remain available where needed.
@@ -48,7 +48,8 @@ assets/data/camera_manager.db.bak
 Core tables:
 
 - `map_layouts`: independent workspaces with name, background path, grid size, canvas size, and background scale.
-- `cameras`: camera records scoped by `layout_id`, including placement, rotation, display scale, status, zone, DVR origin, layer membership, and placed/unplaced state.
+- `cameras`: device records scoped by `layout_id`, including device kind, variant, optional IP, ping preference, placement, rotation/display data for cameras, status, zone, DVR origin, layer membership, and placed/unplaced state.
+- `device_links`: directed upstream topology links scoped by `layout_id`, for example `Camera -> AP -> Switch -> Server`.
 - `canvas_layers`: user-managed layer stack per layout, including name, position, visibility, and lock state.
 - `drawing_shapes`: persisted annotations scoped by `layout_id`, including geometry, color, text labels, PNG asset paths, and layer membership.
 - `ping_history`: status history records per camera.
@@ -71,20 +72,23 @@ Each layout is an independent workspace:
 
 The combined Control Panel exposes layout selection plus add, rename, and delete actions.
 
-## Camera Workflow
+## Device Workflow
 
-Camera records can be created, edited, deleted, imported from CSV, and exported to CSV from the Control Panel.
+Device records can be created, edited, deleted, imported from CSV, and exported to CSV from the Control Panel. Supported device kinds are Camera, Server, Switch, Hub, DVR, AP, Router, and Firewall. Each kind has preset variants in the properties dialog.
 
-The camera list:
+The device list:
 
 - Groups cameras by DVR origin.
-- Supports search by name, IP address, DVR origin, and zone.
-- Switches between unplaced and placed cameras.
-- Drags child camera rows onto the canvas.
+- Supports search by name, IP address, DVR origin, zone, device kind, and variant.
+- Switches between unplaced and placed devices.
+- Groups status as Online, Offline, and Unknown. Unknown devices are those with ping disabled or no IP.
+- Drags child device rows onto the canvas.
 
-Dropping a camera onto `MapCanvas` marks it placed, stores its position, assigns it to the active canvas layer, and adds a `CameraItem` to the scene. Placed cameras can show configurable labels for name, zone, IP, and DVR origin.
+Dropping a device onto `MapCanvas` marks it placed, stores its position, assigns it to the active canvas layer, and adds a scene item. Placed devices can show configurable labels for name, zone, IP, and DVR origin.
 
-In `Select` mode, camera items can be moved, rotated, resized, edited, or unbound from the canvas. In `Pan` mode, camera and drawing item interaction is suspended so canvas dragging cannot accidentally edit objects.
+In `Select` mode, device items can be moved, edited, or unbound from the canvas. Camera items additionally support rotation, resizing, location images, and field-of-view rendering. In `Pan` mode, device and drawing item interaction is suspended so canvas dragging cannot accidentally edit objects.
+
+Topology links can be edited in device properties or created on the canvas with the Link Device tool. Links are hidden by default. Selecting a placed device renders the full connected chain around it.
 
 ## Canvas Modes And Drawing Tools
 
@@ -96,6 +100,7 @@ Available canvas modes are defined by `views.map_drawing_tools.DrawingMode`:
 - `RECTANGLE`
 - `ZONE`
 - `FREEHAND`
+- `LINK`
 
 The app opens in `PAN` mode by default. `PAN` uses `ScrollHandDrag`, clears selection, and disables item selectable/movable/focus flags until another mode is selected.
 
@@ -109,6 +114,7 @@ The Drawing Tools panel contains icon-only actions for:
 - Color
 - Delete selected
 - Rotate selected camera
+- Link device
 - Grid visibility
 - Camera info visibility: name, zone, IP, DVR
 
@@ -120,7 +126,7 @@ Layers now behave like a simplified Photoshop layer stack:
 
 - No default item-type groups are shown or maintained for new layouts.
 - A layout with no user layers gets one base layer named `Layer 1`.
-- New cameras, drawings, text annotations, and PNG annotations are assigned to the currently active layer.
+- New devices, drawings, text annotations, and PNG annotations are assigned to the currently active layer.
 - The Layers panel shows layer rows with visibility controls, names, object counts, and expandable child object rows.
 - Selecting a layer makes it the active target for new objects.
 - Selecting an object row selects that object on the canvas.
@@ -143,7 +149,8 @@ The manifest includes:
 - Layout metadata
 - Current settings snapshot
 - Camera info visibility
-- Cameras and placed/unplaced state
+- Devices and placed/unplaced state
+- Device links
 - Canvas layers
 - Drawing shapes
 - Asset references
@@ -156,14 +163,14 @@ assets/maps/package_<layout_id>/
 
 ## Network Monitoring
 
-`services.network_ping_service.PingService` runs in a `QThread` and emits camera status updates. It supports:
+`services.network_ping_service.PingService` runs in a `QThread` and emits device status updates for monitored devices. It supports:
 
 - Configurable ping interval.
 - Timeout seconds.
 - Retry count before marking a camera offline.
 - ICMP ping first, then TCP fallback.
 
-Runtime network settings are edited through Settings. Status updates are persisted in `ping_history`, reflected on visible camera items, and summarized in the status dashboard.
+Runtime network settings are edited through Settings. Status updates are persisted in `ping_history`, reflected on visible device items, and summarized in the status dashboard. Devices with ping disabled or blank IP are not monitored and appear as Unknown.
 
 ## Themes And Reusable UI Assets
 

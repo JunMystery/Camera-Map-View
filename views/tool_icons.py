@@ -1,13 +1,50 @@
 """Small vector icons rendered with Qt for tool panels."""
 
+from pathlib import Path
+
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
 from views.ui_theme import PRIMARY_SOFT, SUCCESS, TEXT_ON_DARK
 
+BUTTON_ICON_DIR = Path("assets/icons/buttons")
+DEVICE_ICON_DIR = Path("assets/icons/devices")
+
+BUTTON_ICON_FILES = {
+    "add": "add.svg",
+    "add_camera": "add.svg",
+    "add_layout": "add.svg",
+    "add_layer": "add.svg",
+    "delete": "delete.svg",
+    "trash": "delete.svg",
+    "import": "import.svg",
+    "export": "export.svg",
+    "info": "info.svg",
+    "settings": "settings-edit.svg",
+    "cog": "settings-edit.svg",
+    "edit": "settings-edit.svg",
+    "rename": "settings-edit.svg",
+}
+
+DEVICE_ICON_FILES = {
+    "AP": "ap.svg",
+    "Camera": "camera.svg",
+    "DVR": "dvr.svg",
+    "Firewall": "firewall.svg",
+    "Hub": "switch-hub.svg",
+    "PC": "pc.svg",
+    "Router": "router.svg",
+    "Server": "server.svg",
+    "Switch": "switch-hub.svg",
+}
+
 
 def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) -> QIcon:
     """Create a simple high-contrast icon for a named UI action."""
+    asset_icon = _asset_icon(BUTTON_ICON_DIR / BUTTON_ICON_FILES.get(name, ""))
+    if not asset_icon.isNull():
+        return asset_icon
+
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -110,6 +147,9 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
     elif name in {"locked", "lock"}:
         painter.drawRect(QRectF(9, 14, 14, 11))
         painter.drawArc(QRectF(11, 7, 10, 12), 0, 180 * 16)
+    elif name in {"unlocked", "unlock"}:
+        painter.drawRect(QRectF(9, 14, 14, 11))
+        painter.drawArc(QRectF(14, 7, 10, 12), 40 * 16, 150 * 16)
     elif name in {"add_layer", "add"}:
         painter.drawRect(QRectF(7, 9, 15, 16))
         painter.drawLine(24, 18, 30, 18)
@@ -127,6 +167,13 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
         painter.drawLine(7, 16, 25, 16)
         painter.drawLine(19, 10, 25, 16)
         painter.drawLine(19, 22, 25, 16)
+    elif name in {"link_device", "link"}:
+        painter.drawEllipse(QRectF(6, 12, 8, 8))
+        painter.drawEllipse(QRectF(18, 12, 8, 8))
+        painter.drawLine(14, 16, 18, 16)
+    elif name in {"close", "x"}:
+        painter.drawLine(9, 9, 23, 23)
+        painter.drawLine(23, 9, 9, 23)
     elif name in {"camera", "add_camera"}:
         painter.drawRect(QRectF(7, 11, 14, 11))
         painter.drawLine(21, 14, 27, 10)
@@ -170,3 +217,28 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
 
     painter.end()
     return QIcon(pixmap)
+
+
+def device_icon(device_kind: str) -> QIcon:
+    """Return a device SVG icon with a simple fallback."""
+    asset_icon = _asset_icon(DEVICE_ICON_DIR / DEVICE_ICON_FILES.get(device_kind, ""))
+    if not asset_icon.isNull():
+        return asset_icon
+    return tool_icon("camera" if device_kind == "Camera" else "layout")
+
+
+def device_pixmap(device_kind: str, size: int = 32) -> QPixmap:
+    """Return a pixmap for one device kind."""
+    icon = device_icon(device_kind)
+    pixmap = icon.pixmap(size, size)
+    if not pixmap.isNull():
+        return pixmap
+    fallback = QPixmap(size, size)
+    fallback.fill(Qt.GlobalColor.transparent)
+    return fallback
+
+
+def _asset_icon(path: Path) -> QIcon:
+    if not path.name or not path.exists() or not path.is_file():
+        return QIcon()
+    return QIcon(str(path))

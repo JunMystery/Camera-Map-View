@@ -4,7 +4,7 @@
   "ping_retries": 1,
   "canvas_width": 4000,
   "canvas_height": 3000,
-  "grid_size": 20,
+  "grid_size": 10,
   "background_scale": 1.0,
-  "light_theme": true
+  "light_theme": false
 }
