@@ -41,6 +41,27 @@ class DrawingShapeOperations:
         cursor = self.db.execute("DELETE FROM drawing_shapes WHERE id = ?", (shape_id,))
         return cursor.rowcount > 0
 
+    def update_drawing_shape(self, shape: DrawingShape, layout_id: str = "default") -> bool:
+        """Update a persisted drawing shape without changing the schema."""
+        cursor = self.db.execute(
+            """
+            UPDATE drawing_shapes
+            SET points = ?, color = ?, line_thickness = ?, label = ?, image_path = ?, layer_id = ?
+            WHERE id = ? AND layout_id = ?
+            """,
+            (
+                json.dumps(shape.points),
+                shape.color,
+                shape.line_thickness,
+                shape.label,
+                shape.image_path,
+                shape.layer_id or self._default_shape_layer_id(layout_id, shape.shape_type),
+                shape.id,
+                layout_id,
+            ),
+        )
+        return cursor.rowcount > 0
+
     def get_drawing_shapes(self, layout_id: str = "default") -> list[DrawingShape]:
         """Return persisted drawing shapes for a layout."""
         self.ensure_default_layers(layout_id)

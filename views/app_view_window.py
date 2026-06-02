@@ -3,7 +3,7 @@
 import os
 
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QColorDialog, QFileDialog, QInputDialog, QMainWindow, QMessageBox, QStatusBar, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QColorDialog, QFileDialog, QMainWindow, QMessageBox, QStatusBar, QVBoxLayout, QWidget
 
 from config.i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, get_language, set_language, t
 from controllers.camera_data_manager import CameraDataManager
@@ -19,6 +19,7 @@ from views.layer_state import ALL_LAYERS
 from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
 from views.status_dashboard import StatusDashboard
+from views.text_annotation_dialog import TextAnnotationDialog
 
 
 class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDocks, AppToolbars, QMainWindow):
@@ -58,7 +59,6 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.camera_manager = CameraDataManager()
         self.init_layouts_dock()
         self.init_layers_dock()
-        self.init_floating_tools_toolbar()
         self.add_widget_reopen_actions()
         self.retranslate()
         self.status_bar.showMessage(t("app.ready"), 5000)
@@ -164,6 +164,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.rotate_camera_action.triggered.connect(self.rotate_selected_cameras)
 
         self.grid_action = QAction(self)
+        self.grid_action.setObjectName("grid")
         self.grid_action.setCheckable(True)
         self.grid_action.setChecked(True)
         self.grid_action.triggered.connect(self.map_canvas.set_grid_visible)
@@ -171,6 +172,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.info_actions: dict[str, QAction] = {}
         for field in ("name", "zone", "ip", "dvr"):
             action = QAction(self)
+            action.setObjectName(f"show_{field}")
             action.setCheckable(True)
             action.setChecked(field == "name")
             action.triggered.connect(lambda checked=False, item=field: self.map_canvas.set_camera_info_visibility(item, checked))
@@ -213,7 +215,6 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
             self.choose_color_action,
             self.delete_selected_action,
             self.rotate_camera_action,
-            self.settings_action,
         ]:
             self.annotate_menu.addAction(action)
         self.annotate_menu.addSeparator()
@@ -224,7 +225,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         for action in self.language_actions.values():
             self.language_menu.addAction(action)
 
-        self.init_two_level_toolbar()
+        self.init_main_toolbar()
         self.init_drawing_tools_dock()
 
     def set_canvas_mode(self, mode: DrawingMode) -> None:
@@ -241,10 +242,25 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.map_canvas.set_drawing_mode(mode)
 
     def add_text_annotation(self) -> None:
-        """Prompt and add a text annotation."""
-        text, accepted = QInputDialog.getText(self, t("dialog.add_text.title"), t("dialog.add_text.label"))
-        if accepted and text.strip():
-            self.map_canvas.add_text_annotation(text.strip())
+        """Add or edit a text annotation."""
+        selected_text = self.map_canvas.selected_text_annotation()
+        dialog = TextAnnotationDialog(
+            text=selected_text.label if selected_text is not None else "",
+            font_size=selected_text.line_thickness if selected_text is not None else 18,
+            color=selected_text.color if selected_text is not None else self.map_canvas.drawing_color,
+            editing=selected_text is not None,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        text, font_size, color = dialog.get_values()
+        if not text:
+            return
+        self.map_canvas.set_drawing_color(color)
+        if selected_text is not None:
+            self.map_canvas.update_selected_text_annotation(text, font_size, color)
+            return
+        self.map_canvas.add_text_annotation(text, font_size, color)
 
     def insert_png_annotation(self) -> None:
         """Import and add a compressed PNG annotation."""
@@ -300,20 +316,35 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         )
 
     def unload_background_image(self) -> None:
+        if not self._confirm(t("dialog.confirm_unload_map.title"), t("dialog.confirm_unload_map.body")):
+            return
         self.map_canvas.unload_background_image()
         self.current_background_path = ""
         self.save_current_layout_state()
         self.status_bar.showMessage(t("status.map_unloaded"), 5000)
 
+    def _confirm(self, title: str, message: str) -> bool:
+        result = QMessageBox.question(
+            self,
+            title,
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
+
     def showEvent(self, event: object) -> None:
         super().showEvent(event)
-        self.position_floating_tools_toolbar()
+        self.position_drawing_tools_panel()
 
     def resizeEvent(self, event: object) -> None:
         super().resizeEvent(event)
-        self.position_floating_tools_toolbar()
+        self.position_drawing_tools_panel()
 
     def closeEvent(self, event: object) -> None:
+        if not self._confirm(t("dialog.confirm_exit.title"), t("dialog.confirm_exit.body")):
+            event.ignore()
+            return
         self.ping_service.stop()
         super().closeEvent(event)
 
@@ -333,8 +364,6 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.setWindowTitle(t("app.title"))
         if hasattr(self, "dock"):
             self.dock.setWindowTitle(t("dock.control_panel"))
-        if hasattr(self, "tools_dock"):
-            self.tools_dock.setWindowTitle(t("dock.drawing_tools"))
         if hasattr(self, "layers_dock"):
             self.layers_dock.setWindowTitle(t("dock.layers"))
         if hasattr(self, "open_action"):
@@ -365,7 +394,8 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
             self.draw_menu.setTitle(t("menu.draw"))
             self.annotate_menu.setTitle(t("menu.annotate"))
             self.language_menu.setTitle(t("menu.language"))
-            self.layouts_dock.setWindowTitle(t("dock.layouts"))
+            if hasattr(self, "drawing_tools_view_action"):
+                self.drawing_tools_view_action.setText(t("dock.drawing_tools"))
             self.retranslate_toolbars()
             self.map_canvas.set_default_layer_names({layer_id: t(f"layer.{layer_id}") for layer_id in ALL_LAYERS})
             if hasattr(self, "layers_panel"):
@@ -381,8 +411,8 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
             self.map_canvas.retranslate_camera_items()
         if hasattr(self, "status_dashboard"):
             self.status_dashboard.retranslate()
-        if hasattr(self, "floating_tools_toolbar"):
-            self.floating_tools_toolbar.retranslate()
-            self.position_floating_tools_toolbar()
+        if hasattr(self, "drawing_tools_panel"):
+            self.drawing_tools_panel.retranslate()
+            self.position_drawing_tools_panel()
         if hasattr(self, "status_bar"):
             self.status_bar.showMessage(t("app.ready"), 5000)

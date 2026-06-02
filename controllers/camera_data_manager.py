@@ -134,6 +134,19 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
         cursor = self.db.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
         return cursor.rowcount > 0
 
+    def unplace_camera(self, camera_id: str) -> bool:
+        """Remove a camera from the map while keeping it in storage."""
+        cursor = self.db.execute(
+            """
+            UPDATE cameras
+            SET is_placed = 0,
+                layer_id = CASE WHEN layout_id IS NULL THEN layer_id ELSE 'layer_' || layout_id || '_cameras' END
+            WHERE id = ?
+            """,
+            (camera_id,),
+        )
+        return cursor.rowcount > 0
+
     def import_cameras_csv(self, file_path: str | Path, layout_id: str = "default") -> int:
         """Import cameras from CSV and return the number of added records."""
         added = 0

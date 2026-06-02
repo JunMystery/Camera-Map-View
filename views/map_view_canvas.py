@@ -13,6 +13,7 @@ from views.map_canvas_actions import MapCanvasActions
 from views.map_canvas_drawing_events import MapCanvasDrawingEvents
 from views.map_canvas_surface import MapCanvasSurface
 from views.camera_view_item import CameraItem
+from views.ui_theme import DANGER
 from views.layer_state import (
     CAMERAS_LAYER,
     DRAWINGS_LAYER,
@@ -31,6 +32,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     camera_deleted = pyqtSignal(str)
     object_layer_changed = pyqtSignal(str, str, str)
     drawing_created = pyqtSignal(object)
+    drawing_updated = pyqtSignal(object)
     drawing_deleted = pyqtSignal(str)
 
     def __init__(self, parent: Any = None) -> None:
@@ -62,7 +64,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.background_scale = 1.0
         self.light_theme = False
         self.drawing_mode = DrawingMode.SELECT
-        self.drawing_color = "#ef4444"
+        self.drawing_color = DANGER
         self.drawing_start_pos: QPointF | None = None
         self.freehand_points: list[QPointF] = []
         self.preview_item: QGraphicsItem | None = None

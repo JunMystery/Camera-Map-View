@@ -2,6 +2,10 @@
 
 from typing import Any
 
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QGraphicsTextItem
+
+from models.drawing_shape_model import DrawingShape
 from utils.geometry import snap_to_grid
 from views.camera_view_item import CameraItem
 from views.layer_state import (
@@ -67,12 +71,38 @@ class MapCanvasActions:
         for item in self.camera_items.values():
             item.set_info_visibility(self.camera_info_visibility)
 
-    def add_text_annotation(self, text: str) -> Any:
+    def add_text_annotation(self, text: str, font_size: int = 18, color: str | None = None) -> Any:
         """Add a text annotation at the center of the current viewport."""
         center = self.mapToScene(self.viewport().rect().center())
-        shape = self.drawing_tool.text_shape(center, text, self.drawing_color)
+        shape = self.drawing_tool.text_shape(center, text, color or self.drawing_color, font_size)
         self.add_drawing_shape(shape, emit_created=True)
         return shape
+
+    def selected_text_annotation(self) -> DrawingShape | None:
+        """Return the selected text annotation model when exactly one text item is selected."""
+        selected_items = [item for item in self.scene.selectedItems() if item.data(1) == "drawing"]
+        if len(selected_items) != 1 or not isinstance(selected_items[0], QGraphicsTextItem):
+            return None
+        return self._text_shape_from_item(selected_items[0])
+
+    def update_selected_text_annotation(self, text: str, font_size: int, color: str) -> DrawingShape | None:
+        """Update the selected text annotation and emit persistence data."""
+        selected = self.selected_text_annotation()
+        if selected is None:
+            return None
+        item = self._selected_text_item()
+        if item is None:
+            return None
+
+        item.setPlainText(text)
+        font = item.font()
+        font.setPointSize(font_size)
+        item.setFont(font)
+        item.setDefaultTextColor(QColor(color))
+
+        updated = self._text_shape_from_item(item)
+        self.drawing_updated.emit(updated)
+        return updated
 
     def add_image_annotation(self, image_path: str, width: int, height: int) -> Any:
         """Add an image annotation at the center of the current viewport."""
@@ -83,16 +113,21 @@ class MapCanvasActions:
         return shape
 
     def delete_selected_drawings(self) -> int:
-        """Delete selected non-camera drawing items from the scene and persistence."""
+        """Delete selected drawings and unbind selected cameras from the scene."""
         deleted = 0
         for item in list(self.scene.selectedItems()):
-            if item.data(1) != "drawing":
-                continue
-            shape_id = item.data(0)
-            self.scene.removeItem(item)
-            if shape_id:
-                self.drawing_deleted.emit(str(shape_id))
-            deleted += 1
+            if item.data(1) == "drawing":
+                shape_id = item.data(0)
+                self.scene.removeItem(item)
+                if shape_id:
+                    self.drawing_deleted.emit(str(shape_id))
+                deleted += 1
+            elif item.data(1) == "camera" and isinstance(item, CameraItem):
+                camera_id = item.camera.id
+                self.scene.removeItem(item)
+                self.camera_items.pop(camera_id, None)
+                self.camera_deleted.emit(camera_id)
+                deleted += 1
         return deleted
 
     def rotate_selected_cameras(self, degrees: float = 15.0) -> int:
@@ -289,6 +324,27 @@ class MapCanvasActions:
                 item.setSelected(True)
                 return True
         return False
+
+    def _selected_text_item(self) -> QGraphicsTextItem | None:
+        selected_items = [item for item in self.scene.selectedItems() if item.data(1) == "drawing"]
+        if len(selected_items) == 1 and isinstance(selected_items[0], QGraphicsTextItem):
+            return selected_items[0]
+        return None
+
+    def _text_shape_from_item(self, item: QGraphicsTextItem) -> DrawingShape:
+        color = item.defaultTextColor().name()
+        font_size = item.font().pointSize()
+        if font_size <= 0:
+            font_size = 18
+        return DrawingShape(
+            id=str(item.data(0) or ""),
+            shape_type="Text",
+            points=[item.pos().x(), item.pos().y()],
+            color=color,
+            line_thickness=font_size,
+            label=item.toPlainText(),
+            layer_id=str(item.data(2) or ""),
+        )
 
     def _items_for_layer(self, layer_id: str) -> list[Any]:
         layer_id = self._resolve_layer_id(layer_id)

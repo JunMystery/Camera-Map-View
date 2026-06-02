@@ -8,6 +8,7 @@ from models.camera_data_model import Camera
 from models.drawing_shape_model import DrawingShape
 from views.camera_view_panel import CameraPanel
 from views.map_view_canvas import MapCanvas
+from views.ui_theme import GRID_DARK, GRID_LIGHT
 
 
 def test_drop_camera_persists_position_and_moves_item_to_map() -> None:
@@ -71,6 +72,26 @@ def test_canvas_deletes_selected_drawing_shape() -> None:
 
     assert canvas.delete_selected_drawings() == 1
     assert manager.get_drawing_shapes() == []
+    app.processEvents()
+
+
+def test_canvas_unbinds_selected_camera_without_deleting_record() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    controller = CameraPlacementController(panel, canvas, manager)
+    controller.load_cameras()
+    controller.handle_camera_dropped("cam_01", 100.0, 100.0)
+
+    canvas.camera_items["cam_01"].setSelected(True)
+
+    assert canvas.delete_selected_drawings() == 1
+    saved = manager.get_camera("cam_01")
+    assert saved is not None
+    assert "cam_01" not in canvas.camera_items
+    assert "cam_01" in {camera.id for camera in manager.get_unplaced_cameras()}
+    assert _camera_count(panel) == 5
     app.processEvents()
 
 
@@ -154,13 +175,13 @@ def test_canvas_theme_updates_grid_and_camera_items() -> None:
 
     assert not canvas.light_theme
     assert not camera_item.light_theme
-    assert canvas.grid_items[0].pen().color().name() == "#94a3b8"
+    assert canvas.grid_items[0].pen().color().name() == GRID_DARK
 
     canvas.set_light_theme(True)
 
     assert canvas.light_theme
     assert camera_item.light_theme
-    assert canvas.grid_items[0].pen().color().name() == "#475569"
+    assert canvas.grid_items[0].pen().color().name() == GRID_LIGHT
     app.processEvents()
 
 

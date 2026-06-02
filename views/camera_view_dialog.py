@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 
 from config.i18n import t
 from models.camera_data_model import Camera
+from views.ui_theme import DANGER
 
 
 class CameraPropertiesDialog(QDialog):
@@ -65,7 +66,7 @@ class CameraPropertiesDialog(QDialog):
         self.notes_input.setMinimumHeight(80)
 
         self.error_label = QLabel("", self)
-        self.error_label.setStyleSheet("color: #ef4444;")
+        self.error_label.setStyleSheet(f"color: {DANGER};")
 
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel,

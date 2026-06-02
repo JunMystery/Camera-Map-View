@@ -152,6 +152,21 @@ def test_add_and_fetch_drawing_shape() -> None:
     assert manager.get_drawing_shapes() == []
 
 
+def test_update_drawing_shape_persists_text_style() -> None:
+    manager = CameraDataManager(":memory:")
+    shape = DrawingShape("shape_text", "Text", [10.0, 20.0], color="#111111", line_thickness=18, label="Old")
+    manager.add_drawing_shape(shape)
+
+    updated = DrawingShape("shape_text", "Text", [30.0, 40.0], color="#00ff00", line_thickness=24, label="New")
+
+    assert manager.update_drawing_shape(updated)
+    saved = manager.get_drawing_shapes()[0]
+    assert saved.label == "New"
+    assert saved.color == "#00ff00"
+    assert saved.line_thickness == 24
+    assert saved.points == [30.0, 40.0]
+
+
 def test_database_manager_creates_startup_backup(tmp_path) -> None:
     db_path = tmp_path / "camera_manager.db"
     manager = CameraDbManager(db_path)

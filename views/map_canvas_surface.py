@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsPixmapItem
 
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
+from views.ui_theme import GRID_DARK, GRID_LIGHT, PRIMARY
 
 
 class MapCanvasSurface:
@@ -71,13 +72,13 @@ class MapCanvasSurface:
             return False
 
     def _add_grid_items(self, width: int, height: int, grid_size: int) -> None:
-        grid_color = QColor("#475569") if self.light_theme else QColor("#94a3b8")
+        grid_color = QColor(GRID_LIGHT) if self.light_theme else QColor(GRID_DARK)
         pen = QPen(grid_color, 1, Qt.PenStyle.DotLine)
         for x in range(0, width, grid_size):
             self.grid_items.append(self.scene.addLine(x, 0, x, height, pen))
         for y in range(0, height, grid_size):
             self.grid_items.append(self.scene.addLine(0, y, width, y, pen))
-        border_pen = QPen(QColor("#3b82f6"), 2, Qt.PenStyle.SolidLine)
+        border_pen = QPen(QColor(PRIMARY), 2, Qt.PenStyle.SolidLine)
         self.grid_items.append(self.scene.addRect(0, 0, width, height, border_pen))
         for item in self.grid_items:
             item.setData(2, GRID_LAYER)

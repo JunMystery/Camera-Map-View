@@ -16,6 +16,9 @@ from PyQt6.QtWidgets import (
 )
 
 from models.drawing_shape_model import DrawingShape
+from views.ui_theme import DANGER
+
+TEXT_DEFAULT_FONT_SIZE = 18
 
 
 class DrawingMode(str, Enum):
@@ -39,7 +42,7 @@ class DrawingTool:
         mode: DrawingMode,
         start_pos: QPointF,
         end_pos: QPointF,
-        color: str = "#ef4444",
+        color: str = DANGER,
     ) -> DrawingShape | None:
         """Create a shape model from two scene positions."""
         start_x, start_y = self.snap_callback(start_pos.x(), start_pos.y())
@@ -71,10 +74,10 @@ class DrawingTool:
             return None
         return DrawingShape(f"shape_{uuid.uuid4().hex}", "Freehand", flat_points, color=color)
 
-    def text_shape(self, position: QPointF, text: str, color: str) -> DrawingShape:
+    def text_shape(self, position: QPointF, text: str, color: str, font_size: int = TEXT_DEFAULT_FONT_SIZE) -> DrawingShape:
         """Create a text annotation at a scene position."""
         x, y = self.snap_callback(position.x(), position.y())
-        return DrawingShape(f"shape_{uuid.uuid4().hex}", "Text", [x, y], color=color, label=text)
+        return DrawingShape(f"shape_{uuid.uuid4().hex}", "Text", [x, y], color=color, line_thickness=font_size, label=text)
 
     def image_shape(self, position: QPointF, image_path: str, width: float, height: float) -> DrawingShape:
         """Create an image annotation at a scene position."""
@@ -119,6 +122,9 @@ class DrawingTool:
 
         if shape.shape_type == "Text" and len(shape.points) >= 2:
             item = QGraphicsTextItem(shape.label)
+            font = item.font()
+            font.setPointSize(self._text_font_size(shape.line_thickness))
+            item.setFont(font)
             item.setDefaultTextColor(QColor(shape.color))
             item.setPos(shape.points[0], shape.points[1])
             return item
@@ -132,3 +138,6 @@ class DrawingTool:
             return item
 
         return None
+
+    def _text_font_size(self, line_thickness: int) -> int:
+        return TEXT_DEFAULT_FONT_SIZE if line_thickness <= 2 else line_thickness

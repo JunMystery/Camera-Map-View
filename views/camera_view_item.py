@@ -10,6 +10,17 @@ from PyQt6.QtWidgets import QGraphicsItem, QMenu, QStyleOptionGraphicsItem, QWid
 
 from config.i18n import t
 from models.camera_data_model import Camera
+from views.ui_theme import (
+    DANGER,
+    DARK_SURFACE_ALT,
+    LIGHT_TEXT,
+    PRIMARY,
+    SUCCESS,
+    TEXT_MUTED,
+    TEXT_ON_DARK,
+    TEXT_WHITE,
+    WARNING,
+)
 
 
 class CameraItem(QGraphicsItem):
@@ -109,7 +120,7 @@ class CameraItem(QGraphicsItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         is_selected = self.isSelected()
-        fov_color = QColor("#3b82f6") if is_selected else QColor("#9ca3af")
+        fov_color = QColor(PRIMARY) if is_selected else QColor(TEXT_MUTED)
         fov_color.setAlpha(40 if is_selected else 15)
 
         painter.save()
@@ -125,9 +136,9 @@ class CameraItem(QGraphicsItem):
         painter.setPen(fov_pen)
         painter.drawPath(fov_path)
 
-        body_color = QColor("#1f2937") if self.light_theme else QColor("#2d2d34")
-        outline_color = QColor("#0f172a") if self.light_theme else QColor("#f3f4f6")
-        lens_color = QColor("#f8fafc")
+        body_color = QColor(LIGHT_TEXT) if self.light_theme else QColor(DARK_SURFACE_ALT)
+        outline_color = QColor(LIGHT_TEXT) if self.light_theme else QColor(TEXT_ON_DARK)
+        lens_color = QColor(TEXT_ON_DARK)
         painter.setPen(QPen(outline_color, 1.5))
         painter.setBrush(QBrush(body_color))
         painter.drawRect(-12, -8, 20, 16)
@@ -146,28 +157,28 @@ class CameraItem(QGraphicsItem):
         if is_selected:
             painter.save()
             painter.rotate(self.camera.rotation)
-            painter.setPen(QPen(QColor("#facc15"), 2, Qt.PenStyle.DashLine))
+            painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QPointF(0, 0), 46, 46)
-            painter.setPen(QPen(QColor("#facc15"), 2, Qt.PenStyle.SolidLine))
+            painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.SolidLine))
             painter.drawLine(0, 0, 46, 0)
-            painter.setBrush(QBrush(QColor("#facc15")))
+            painter.setBrush(QBrush(QColor(WARNING)))
             painter.drawEllipse(41, -5, 10, 10)
             painter.restore()
 
             painter.save()
-            painter.setPen(QPen(QColor("#facc15"), 1.5, Qt.PenStyle.SolidLine))
-            painter.setBrush(QBrush(QColor("#facc15")))
+            painter.setPen(QPen(QColor(WARNING), 1.5, Qt.PenStyle.SolidLine))
+            painter.setBrush(QBrush(QColor(WARNING)))
             painter.drawRect(self._resize_handle_rect())
             painter.restore()
 
-        status_color = QColor("#10b981") if self.camera.status else QColor("#ef4444")
-        painter.setPen(QPen(QColor("#ffffff"), 1))
+        status_color = QColor(SUCCESS) if self.camera.status else QColor(DANGER)
+        painter.setPen(QPen(QColor(TEXT_WHITE), 1))
         painter.setBrush(QBrush(status_color))
         painter.drawEllipse(-16, -14, 8, 8)
 
-        label_color = QColor("#111827") if self.light_theme else QColor("#f3f4f6")
-        painter.setPen(QPen(label_color if is_selected else QColor("#9ca3af"), 1))
+        label_color = QColor(LIGHT_TEXT) if self.light_theme else QColor(TEXT_ON_DARK)
+        painter.setPen(QPen(label_color if is_selected else QColor(TEXT_MUTED), 1))
         font = QFont("Inter", 8)
         if is_selected:
             font.setBold(True)

@@ -169,6 +169,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "View",
         "jp": "表示",
     },
+    "menu.draw": {
+        "vi": "Vẽ",
+        "en": "Draw",
+        "jp": "描画",
+    },
+    "menu.annotate": {
+        "vi": "Chú thích",
+        "en": "Annotate",
+        "jp": "注釈",
+    },
     "menu.tools": {
         "vi": "Công cụ",
         "en": "Tools",
@@ -183,31 +193,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "vi": "Thanh công cụ chính",
         "en": "Main toolbar",
         "jp": "メインツールバー",
-    },
-    "toolbar.context": {
-        "vi": "Thanh công cụ ngữ cảnh",
-        "en": "Context toolbar",
-        "jp": "コンテキストツールバー",
-    },
-    "toolbar.group.map": {
-        "vi": "Bản đồ",
-        "en": "Map",
-        "jp": "マップ",
-    },
-    "toolbar.group.draw": {
-        "vi": "Vẽ",
-        "en": "Draw",
-        "jp": "描画",
-    },
-    "toolbar.group.annotate": {
-        "vi": "Chú thích",
-        "en": "Annotate",
-        "jp": "注釈",
-    },
-    "toolbar.group.view": {
-        "vi": "Hiển thị",
-        "en": "View",
-        "jp": "表示",
     },
     "layer.background": {
         "vi": "Bản đồ nền",
@@ -429,10 +414,45 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Text",
         "jp": "テキスト",
     },
+    "dialog.add_text.size": {
+        "vi": "Kích thước",
+        "en": "Size",
+        "jp": "サイズ",
+    },
+    "dialog.add_text.color": {
+        "vi": "Màu sắc",
+        "en": "Color",
+        "jp": "色",
+    },
+    "dialog.edit_text.title": {
+        "vi": "Sửa chữ",
+        "en": "Edit text",
+        "jp": "テキスト編集",
+    },
     "dialog.choose_color.title": {
         "vi": "Chọn màu vẽ",
         "en": "Choose drawing color",
         "jp": "描画色を選択",
+    },
+    "dialog.confirm_unload_map.title": {
+        "vi": "Gỡ bản đồ nền?",
+        "en": "Unload background map?",
+        "jp": "背景マップを解除しますか？",
+    },
+    "dialog.confirm_unload_map.body": {
+        "vi": "Bản đồ nền hiện tại sẽ bị gỡ khỏi canvas. Tiếp tục?",
+        "en": "The current background map will be removed from the canvas. Continue?",
+        "jp": "現在の背景マップがキャンバスから削除されます。続行しますか？",
+    },
+    "dialog.confirm_exit.title": {
+        "vi": "Thoát ứng dụng?",
+        "en": "Exit application?",
+        "jp": "アプリを終了しますか？",
+    },
+    "dialog.confirm_exit.body": {
+        "vi": "Bạn có chắc muốn thoát ứng dụng?",
+        "en": "Are you sure you want to exit the application?",
+        "jp": "アプリケーションを終了してもよろしいですか？",
     },
     "error.load_file.title": {
         "vi": "Lỗi tải tệp",

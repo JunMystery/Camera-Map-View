@@ -34,9 +34,10 @@ class CameraPlacementController:
         self.map_canvas.camera_moved.connect(self.update_camera_position)
         self.map_canvas.camera_rotated.connect(self.camera_manager.update_camera_rotation)
         self.map_canvas.camera_resized.connect(self.camera_manager.update_camera_scale)
-        self.map_canvas.camera_deleted.connect(self.delete_camera)
+        self.map_canvas.camera_deleted.connect(self.unplace_camera)
         self.map_canvas.object_layer_changed.connect(self.update_object_layer)
         self.map_canvas.drawing_created.connect(self.add_drawing_shape)
+        self.map_canvas.drawing_updated.connect(self.update_drawing_shape)
         self.map_canvas.drawing_deleted.connect(self.camera_manager.delete_drawing_shape)
         self.camera_panel.camera_edit_requested.connect(self.edit_camera)
         self.camera_panel.camera_delete_requested.connect(self.delete_camera)
@@ -136,6 +137,17 @@ class CameraPlacementController:
             self.monitor_refresh_callback()
         self._refresh_dashboard()
 
+    def unplace_camera(self, camera_id: str) -> None:
+        """Remove a camera marker from the canvas while keeping the camera record."""
+        if not self.camera_manager.unplace_camera(camera_id):
+            return
+        self.map_canvas.remove_camera_item(camera_id)
+        self.camera_panel.set_cameras(
+            self.camera_manager.get_all_cameras(self.current_layout_id),
+            {camera.id for camera in self.camera_manager.get_placed_cameras(self.current_layout_id)},
+        )
+        self._refresh_dashboard()
+
     def _show_status(self, message: str, timeout_ms: int) -> None:
         if self.status_callback is not None:
             self.status_callback(message, timeout_ms)
@@ -147,6 +159,10 @@ class CameraPlacementController:
     def add_drawing_shape(self, shape: object) -> bool:
         """Persist drawings into the active layout."""
         return self.camera_manager.add_drawing_shape(shape, self.current_layout_id)
+
+    def update_drawing_shape(self, shape: object) -> bool:
+        """Persist edited drawings into the active layout."""
+        return self.camera_manager.update_drawing_shape(shape, self.current_layout_id)
 
     def update_object_layer(self, object_type: str, object_id: str, layer_id: str) -> None:
         """Persist a canvas object layer assignment."""

@@ -2,6 +2,7 @@
 
 from config.i18n import t
 from views.settings_dialog import SettingsDialog
+from views.ui_theme import app_stylesheet
 
 
 class AppSettingsActions:
@@ -27,15 +28,18 @@ class AppSettingsActions:
         """Apply the current application theme."""
         light_theme = bool(self.settings["light_theme"])
         self.map_canvas.set_light_theme(light_theme)
-        if light_theme:
-            self.setStyleSheet("QWidget { background: #f8fafc; color: #111827; }")
-        else:
-            self.setStyleSheet("")
+        self.setStyleSheet(app_stylesheet(light_theme))
 
     def add_widget_reopen_actions(self) -> None:
         """Add menu actions that reopen dock widgets after users close them."""
         self.view_menu.addSeparator()
         self.view_menu.addAction(self.dock.toggleViewAction())
-        self.view_menu.addAction(self.layouts_dock.toggleViewAction())
-        self.view_menu.addAction(self.tools_dock.toggleViewAction())
+        self.drawing_tools_view_action = self.view_menu.addAction(t("dock.drawing_tools"))
+        self.drawing_tools_view_action.triggered.connect(self._show_drawing_tools_panel)
         self.view_menu.addAction(self.layers_dock.toggleViewAction())
+
+    def _show_drawing_tools_panel(self) -> None:
+        """Show the fixed drawing tools panel from the View menu."""
+        self.drawing_tools_panel.show()
+        self.drawing_tools_panel.set_collapsed(False)
+        self.position_drawing_tools_panel()
