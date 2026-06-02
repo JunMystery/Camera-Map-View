@@ -8,7 +8,10 @@ main.py
     +-- MapCanvas
     +-- ControlLayoutPanel
     |   +-- layout selector/actions
-    |   +-- device search/group/filter/actions
+    |   +-- status filter
+    |   +-- topology-tree device list
+    |   +-- placed/unplaced toggle
+    |   +-- CSV actions
     +-- DrawingToolsPanel
     +-- LayersPanel
     +-- StatusDashboard
@@ -43,6 +46,12 @@ Views
 |   +-- bounded_graphics_scene.py
 |   +-- camera_view_item.py
 |   +-- map_drawing_tools.py
++-- camera_view_dialog.py
+|   +-- device_connections_dialog.py
++-- camera_location_image_dialog.py
++-- layout_properties_dialog.py
++-- confirm_dialog.py
++-- layer_state.py
 +-- ui_theme.py
 +-- tool_icons.py
 
@@ -50,6 +59,7 @@ Controllers
 +-- camera_data_manager.py
 |   +-- camera_layout_operations.py
 |   +-- camera_layer_operations.py
+|   +-- device_link_operations.py
 |   +-- drawing_shape_operations.py
 +-- camera_placement_controller.py
 
@@ -58,9 +68,13 @@ Models
 +-- drawing_shape_model.py
 +-- canvas_layer_model.py
 +-- map_layout_model.py
++-- device_link_model.py
++-- device_catalog.py
 +-- camera_db_manager.py
 
 Services
++-- app_settings_service.py
++-- active_ping_service.py
 +-- camera_csv_service.py
 +-- map_package_service.py
 +-- network_ping_service.py
@@ -72,7 +86,23 @@ Utils
 
 Config
 +-- i18n.py
++-- strings/
+    +-- UIUX_VI_Strings.xml
+    +-- UIUX_EN_Strings.xml
+    +-- UIUX_JP_Strings.xml
+
+Assets
++-- icons/
+|   +-- buttons/*.svg
+|   +-- devices/*.svg
++-- data/
++-- maps/
+
+Scripts
++-- seed_demo_layout.py
 ```
+
+`config/i18n.py` loads XML resources at startup and exposes the stable runtime API used by views and controllers: `t()`, `set_language()`, `get_language()`, `TRANSLATIONS`, `SUPPORTED_LANGUAGES`, and `LANGUAGE_LABELS`.
 
 ## Main Window Wiring
 
@@ -83,34 +113,33 @@ MainWindow.__init__()
 |   +-- StatusDashboard
 +-- init_camera_dock()
 |   +-- fixed left QDockWidget
-|   +-- DockTitleBar with red close button
+|   +-- empty dock title bar
 |   +-- ControlLayoutPanel
+|   |   +-- internal title row
+|   |   +-- close button -> dock.close()
 |   +-- camera_panel alias -> ControlLayoutPanel
 |   +-- layouts_panel alias -> ControlLayoutPanel
 +-- init_menus_and_toolbars()
 |   +-- File menu
-|   |   +-- load background map
-|   |   +-- unload background map
-|   |   +-- import diagram package
-|   |   +-- export diagram package
-|   |   +-- exit
+|   +-- Action menu
 |   +-- View menu
-|   |   +-- zoom in/out/fit
-|   |   +-- grid toggle
-|   |   +-- reopen panel actions
 |   +-- Language menu
 |   +-- top-level Settings action
 |   +-- init_drawing_tools_dock()
 |       +-- fixed floating DrawingToolsPanel
 +-- CameraDataManager
++-- load first layout or show blank canvas
 +-- init_layouts_dock()
 |   +-- no-op; layouts live in ControlLayoutPanel
 +-- init_layers_dock()
 |   +-- right QDockWidget
-|   +-- DockTitleBar with red close button
+|   +-- empty dock title bar
 |   +-- LayersPanel
+|       +-- internal title row
+|       +-- close button -> layers_dock.close()
 +-- CameraPlacementController
 +-- PingService.start()
++-- enter_blank_layout_state() when no layout exists
 ```
 
 ## Menu And Action Graph
@@ -123,6 +152,10 @@ File
 +-- export_package_action -> export_current_map_package()
 +-- exit_action -> close() -> confirm -> stop PingService
 
+Action
++-- undo_action -> MapCanvas.undo() when available
++-- redo_action -> MapCanvas.redo() when available
+
 View
 +-- zoom_in_action -> MapCanvas.scale(1.25)
 +-- zoom_out_action -> MapCanvas.scale(0.8)
@@ -132,11 +165,135 @@ View
 +-- drawing tools reopen
 +-- layers dock toggle
 
+Language
++-- vi/en/jp actions -> set_language() -> retranslate()
+
 Settings
-+-- open_settings() -> SettingsDialog
++-- open_settings() -> SettingsDialog(Network, Appearance)
 ```
 
+When `current_layout_id` is empty, layout-dependent actions are disabled. Import package, create layout, settings, language, and basic panel visibility remain available.
+
 There is no toolbar under the menu bar.
+
+## Layout Flow
+
+```text
+App startup
++-- CameraDataManager.get_layouts()
+    +-- has layouts -> switch/load first sorted layout
+    +-- no layouts -> MapCanvas.show_blank_canvas()
+                   -> ControlLayoutPanel.set_cameras([], set(), [])
+                   -> LayersPanel disabled
+                   -> layout-dependent actions disabled
+```
+
+```text
+Add layout
++-- ControlLayoutPanel.layout_add_requested
++-- MainWindow.add_layout()
+    +-- LayoutPropertiesDialog(create)
+    +-- CameraDataManager.create_layout()
+    +-- CameraDataManager.update_layout(canvas settings)
+    +-- switch_layout(new_layout_id)
+```
+
+```text
+Edit layout
++-- ControlLayoutPanel.layout_rename_requested
++-- MainWindow.rename_layout(layout_id)
+    +-- LayoutPropertiesDialog(edit)
+    +-- CameraDataManager.update_layout()
+    +-- apply_layout_to_canvas() when editing current layout
+    +-- save_current_layout_state()
+```
+
+```text
+Delete layout
++-- ControlLayoutPanel.layout_delete_requested
++-- confirm_dialog.confirm()
++-- CameraDataManager.delete_layout(layout_id)
+    +-- remaining layouts -> switch first sorted layout
+    +-- no layouts -> enter_blank_layout_state()
+```
+
+SQLite layout scoping:
+
+```text
+map_layouts.id
++-- cameras.layout_id
++-- device_links.layout_id
++-- canvas_layers.layout_id
++-- drawing_shapes.layout_id
+```
+
+## Device Workflow Graph
+
+```text
+ControlLayoutPanel
++-- Add device -> CameraPropertiesDialog
+|   +-- Manage connections -> DeviceConnectionsDialog
+|   +-- CameraDataManager.add_camera(layout_id)
+|   +-- CameraDataManager.replace_device_links()
++-- Edit device -> CameraPropertiesDialog
+|   +-- CameraDataManager.update_camera_details()
+|   +-- CameraDataManager.replace_device_links()
++-- Delete device -> CameraDataManager.delete_camera_in_layout()
++-- Import CSV -> CameraDataManager.import_cameras_csv(layout_id)
++-- Export CSV -> CameraDataManager.export_cameras_csv(layout_id)
++-- Drag device row -> MapCanvas.dropEvent()
+    +-- CameraPlacementController.handle_camera_dropped()
+        +-- assign active layer
+        +-- CameraDataManager.update_camera_position_in_layout()
+        +-- CameraDataManager.update_camera_layer()
+        +-- MapCanvas.add_camera_item()
+```
+
+Placed device context flow:
+
+```text
+CameraItem.contextMenuEvent()
++-- Location image -> CameraPlacementController.show_location_image()
+|   +-- CameraLocationImageDialog when image exists
+|   +-- edit properties when image is missing
++-- Ping -> CameraPlacementController.ping_camera()
+|   +-- active_ping_service.open_active_ping()
++-- Properties -> CameraPlacementController.edit_camera()
+```
+
+Placed device edit flow:
+
+```text
+CameraItem
++-- moved -> MapCanvas.camera_moved -> CameraPlacementController.update_camera_position()
++-- rotated by handle -> MapCanvas.camera_rotated -> CameraDataManager.update_camera_rotation_in_layout()
++-- resized by handle -> MapCanvas.camera_resized -> CameraDataManager.update_camera_scale_in_layout()
++-- deleted/unbound -> MapCanvas.camera_deleted -> CameraPlacementController.unplace_camera()
++-- link mode click -> MapCanvas.device_link_created -> CameraPlacementController.add_device_link()
++-- selection changed -> MapCanvas.refresh_device_links()
+```
+
+## Control Panel Grouping Flow
+
+```text
+ControlLayoutPanel.set_cameras(cameras, placed_ids, device_links)
++-- filter by placed/unplaced tab
++-- filter by search text
++-- filter by status dropdown
++-- build incoming map from source -> target links
++-- roots = linked devices without outgoing upstream target
++-- add root device tree items
++-- recursively add downstream children
++-- unlinked devices -> Unlinked group
+```
+
+Status bucket:
+
+```text
+ping disabled or blank IP -> Unknown
+ping enabled and status True -> Online
+ping enabled and status False -> Offline
+```
 
 ## Canvas Mode Graph
 
@@ -171,7 +328,13 @@ SELECT
 +-- restore item interaction flags
 +-- allow device/drawing select and move
 +-- allow camera rotate and resize handles
-+-- allow LINK mode click source device then target device
++-- allow right-click unlink on visible DeviceLinkItem
+
+LINK
++-- click source device
++-- click target/upstream device
++-- emit device_link_created(source, target)
++-- right-click link does not unlink
 
 Drawing modes
 +-- use cross cursor
@@ -179,7 +342,49 @@ Drawing modes
 +-- persist final shape through drawing_created signal
 ```
 
+Canvas zoom and pan:
+
+```text
+wheelEvent()
++-- read angleDelta().y()
++-- clamp zoom to min/max
++-- scale under mouse anchor
++-- accept event
+
+mouse/middle/space pan
++-- middle drag pans any mode
++-- left drag pans in PAN
++-- Space temporarily enables hand-drag panning
+```
+
 `Esc` cancels in-progress drawing previews, panning, link source selection, and camera rotate/resize interactions.
+
+## Topology Link Visibility Flow
+
+```text
+MapCanvas.refresh_device_links()
++-- remove previous overlay items
++-- selected_id = selected device id
++-- related = downstream_links(selected_id) + upstream_path_links(selected_id)
++-- create DeviceLinkItem for each visible source/target pair
+```
+
+```text
+downstream_links(target_id)
++-- start with selected device as visited target
++-- include every link where target is visited
++-- add each source to visited
++-- repeat until no new downstream source is found
+```
+
+```text
+upstream_path_links(source_id)
++-- enumerate outgoing source -> target paths
++-- choose deterministic longest path
++-- render that one path upward
+```
+
+`DeviceLinkItem.shape()` uses a wide stroke for hit testing, while paint/pen keeps the visible dashed line thin.
 
 ## Canvas And Layer Graph
 
@@ -192,13 +397,14 @@ MapCanvas
 +-- device items
 |   +-- CameraItem
 +-- temporary device link overlay items
+|   +-- DeviceLinkItem
 +-- drawing items
-    +-- Line
-    +-- Rectangle
-    +-- Polygon/Zone
-    +-- Freehand path
-    +-- Text
-    +-- Image
+    +-- SelectableLineItem
+    +-- SelectableRectItem
+    +-- SelectablePolygonItem
+    +-- SelectablePathItem
+    +-- QGraphicsTextItem
+    +-- QGraphicsPixmapItem
 ```
 
 Layer state flow:
@@ -213,6 +419,7 @@ CameraDataManager.get_layers(layout_id)
 MapCanvas.set_canvas_layers(layers, layout_id)
 +-- stores layer names, visibility, locked state, z-order
 +-- chooses active layer
++-- applies layer z-values
 +-- emits layers_changed
 
 LayersPanel.refresh()
@@ -226,14 +433,28 @@ Layer action flow:
 
 ```text
 LayersPanel
++-- close button -> layers_dock.close()
 +-- add layer -> CameraDataManager.create_layer() -> MapCanvas.set_canvas_layers()
 +-- rename layer -> MapCanvas.rename_layer() + CameraDataManager.rename_layer()
-+-- delete layer -> MapCanvas.delete_layer_items() + CameraDataManager.delete_layer()
-+-- move layer -> CameraDataManager.move_layer() -> MapCanvas.set_canvas_layers()
++-- delete layer/object -> canvas delete + manager delete
++-- move layer up/down -> CameraDataManager.move_layer() -> MapCanvas.set_canvas_layers()
++-- move object up/down -> MapCanvas.move_layer_object() -> object_z_changed
 +-- visibility checkbox -> MapCanvas.set_layer_visible() + CameraDataManager.set_layer_visible()
-+-- select contents -> MapCanvas.select_layer_items()
-+-- move selected -> MapCanvas.move_selected_items_to_layer()
++-- layer lock -> MapCanvas.set_layer_locked() + CameraDataManager.set_layer_locked()
++-- object lock -> MapCanvas.set_layer_object_locked() -> object_locked_changed
++-- object row rename -> MapCanvas.rename_layer_object() -> object_renamed
++-- object drag/drop -> MapCanvas.move_layer_object_to_layer() -> object_layer_changed
 +-- object row select -> MapCanvas.select_layer_object()
+```
+
+Layer z-value rule:
+
+```text
+background -> -30
+grid -> -20
+user layer item -> layer_position * 1000 + object_z_index
+device links -> 45
+camera handles/selection visuals -> item paint overlay
 ```
 
 ## Multi-Layout Data Flow
@@ -241,6 +462,7 @@ LayersPanel
 ```text
 ControlLayoutPanel.layout_selected(layout_id)
 +-- MainWindow.switch_layout(layout_id)
+    +-- invalid or empty id -> enter_blank_layout_state()
     +-- save_current_layout_state()
     +-- apply_layout_to_canvas(layout)
     +-- CameraPlacementController.load_cameras(layout_id)
@@ -249,49 +471,12 @@ ControlLayoutPanel.layout_selected(layout_id)
         +-- MapCanvas.set_canvas_layers()
         +-- CameraDataManager.get_placed_cameras(layout_id)
         +-- CameraDataManager.get_all_cameras(layout_id)
+        +-- CameraDataManager.get_device_links(layout_id)
         +-- ControlLayoutPanel.set_cameras()
         +-- MapCanvas.add_camera_item()
         +-- CameraDataManager.get_drawing_shapes(layout_id)
         +-- MapCanvas.add_drawing_shape()
-```
-
-SQLite layout scoping:
-
-```text
-map_layouts.id
-+-- cameras.layout_id
-+-- canvas_layers.layout_id
-+-- drawing_shapes.layout_id
-```
-
-## Device Workflow Graph
-
-```text
-ControlLayoutPanel
-+-- Import CSV -> CameraDataManager.import_cameras_csv(layout_id)
-+-- Export CSV -> CameraDataManager.export_cameras_csv(layout_id)
-+-- Add device -> CameraPropertiesDialog -> CameraDataManager.add_camera(layout_id)
-+-- Edit device -> CameraPropertiesDialog -> CameraDataManager.update_camera_details()
-+-- Delete device -> CameraDataManager.delete_camera()
-+-- Drag device row -> MapCanvas.dropEvent()
-    +-- CameraPlacementController.handle_camera_dropped()
-        +-- assign active layer
-        +-- CameraDataManager.update_camera_position()
-        +-- CameraDataManager.update_camera_layer()
-        +-- MapCanvas.add_camera_item()
-```
-
-Placed device edit flow:
-
-```text
-CameraItem
-+-- moved -> MapCanvas.camera_moved -> CameraPlacementController.update_camera_position()
-+-- rotated -> MapCanvas.camera_rotated -> CameraDataManager.update_camera_rotation()
-+-- resized -> MapCanvas.camera_resized -> CameraDataManager.update_camera_scale()
-+-- deleted/unbound -> MapCanvas.camera_deleted -> CameraPlacementController.unplace_camera()
-+-- edit requested -> CameraPlacementController.edit_camera()
-+-- link mode click -> MapCanvas.device_link_created -> CameraPlacementController.add_device_link()
-+-- selection changed -> MapCanvas.refresh_device_links()
+        +-- MapCanvas.set_device_links()
 ```
 
 ## Drawing Persistence Flow
@@ -304,13 +489,29 @@ MapCanvas drawing event
     +-- drawing_created(shape)
         +-- CameraPlacementController.add_drawing_shape()
             +-- CameraDataManager.add_drawing_shape(layout_id)
+```
 
-Text edit flow
-+-- MainWindow.add_text_annotation()
+Text edit flow:
+
+```text
+MainWindow.add_text_annotation()
 +-- TextAnnotationDialog
-+-- MapCanvas.update_selected_text_annotation()
-+-- drawing_updated(shape)
-    +-- CameraPlacementController.update_drawing_shape()
++-- existing text selected -> MapCanvas.update_selected_text_annotation()
+|   +-- drawing_updated(shape)
+|       +-- CameraPlacementController.update_drawing_shape()
++-- no selected text -> MapCanvas.add_text_annotation()
+    +-- drawing_created(shape)
+```
+
+Image annotation flow:
+
+```text
+MainWindow.insert_png_annotation()
++-- QFileDialog
++-- import_png_asset()
+    +-- copy/downscale PNG into assets/maps/
+    +-- MapCanvas.add_image_annotation()
+    +-- drawing_created(shape)
 ```
 
 ## Package Export/Import Flow
@@ -330,6 +531,7 @@ Export diagram
         +-- create .cmvmap ZIP
         +-- add background asset when present
         +-- add PNG annotation assets when present
+        +-- add camera location photos when present
         +-- write manifest.json
 ```
 
@@ -338,11 +540,13 @@ Import diagram
 +-- MainWindow.import_map_package_file()
     +-- services.map_package_service.import_map_package()
         +-- read manifest.json
+        +-- validate schema version 1/2/3
         +-- create new layout
         +-- import/remap layers
         +-- extract assets to assets/maps/package_<layout_id>/
-        +-- import devices
-        +-- import device_links with remapped ids
+        +-- import/remap devices
+        +-- import/remap camera location photos
+        +-- import/remap device_links
         +-- import drawings
     +-- refresh_layouts_panel()
     +-- switch_layout(new_layout_id)
@@ -358,11 +562,6 @@ Settings action
         |   +-- ping interval
         |   +-- timeout
         |   +-- retries
-        +-- Canvas tab
-        |   +-- width
-        |   +-- height
-        |   +-- grid size
-        |   +-- background scale
         +-- Appearance tab
             +-- theme dropdown
                 +-- apply_theme_choice(light_theme)
@@ -370,30 +569,55 @@ Settings action
                     +-- apply_theme()
 ```
 
-Saving settings:
+Saving app settings:
 
 ```text
 SettingsDialog.accepted
 +-- MainWindow.settings.update(dialog.values())
++-- save_app_settings()
 +-- PingService.update_settings()
-+-- MapCanvas.resize_canvas()
-+-- MapCanvas.redraw_grid()
-+-- MapCanvas.set_background_scale()
-+-- save_current_layout_state()
 +-- apply_theme()
 ```
+
+Layout canvas settings moved out of Settings:
+
+```text
+LayoutPropertiesDialog
++-- name
++-- canvas width
++-- canvas height
++-- grid size
++-- background scale
++-- CameraDataManager.update_layout()
++-- MainWindow.apply_layout_to_canvas() when current
+```
+
+When a layout has a background image, background scale drives the background pixmap and scene size. When a layout has no background image, canvas width/height and grid size drive the default grid scene.
 
 ## Ping Status Flow
 
 ```text
 PingService
++-- monitors cameras/devices with ping_enabled and valid IP in current layout
 +-- status_updated(camera_id, is_online, latency_ms)
     +-- CameraPlacementController.handle_camera_status_updated()
         +-- CameraDataManager.update_camera_status()
         |   +-- update cameras.status/last_check
         |   +-- insert ping_history row
         +-- MapCanvas.update_camera_status()
-        +-- devices with ping disabled or blank IP are excluded from monitoring
+        +-- ControlLayoutPanel refresh
         +-- StatusDashboard.update_counts()
         +-- status bar message
 ```
+
+Active ping is separate:
+
+```text
+CameraItem context Ping
++-- CameraPlacementController.ping_camera()
+    +-- active_ping_service.open_active_ping(ip)
+        +-- Windows: cmd.exe /k ping -t <ip>
+        +-- non-Windows: ping <ip>
+```
+
+Active ping does not write `ping_history`.

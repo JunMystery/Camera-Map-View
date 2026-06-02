@@ -1,8 +1,21 @@
 """Tests for application translations."""
 
+from pathlib import Path
 import string
+from xml.etree import ElementTree
 
-from config.i18n import SUPPORTED_LANGUAGES, TRANSLATIONS, get_language, set_language, t
+import pytest
+
+from config.i18n import (
+    LANGUAGE_LABELS,
+    STRING_RESOURCE_FILES,
+    SUPPORTED_LANGUAGES,
+    TRANSLATIONS,
+    _load_xml_strings,
+    get_language,
+    set_language,
+    t,
+)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QApplication, QCheckBox, QLabel, QMenu, QPushButton, QTabWidget, QToolButton
@@ -17,6 +30,38 @@ from models.map_layout_model import MapLayout
 from views.layout_properties_dialog import LayoutPropertiesDialog
 from views.settings_dialog import SettingsDialog
 from views.ui_theme import DANGER, LIGHT_ACTIVE_ROW, LIGHT_TEXT, app_stylesheet
+
+
+def _write_string_xml(
+    base_dir: Path,
+    language: str,
+    entries: list[tuple[str, str]],
+    purpose: str = "UIUX",
+) -> None:
+    root = ElementTree.Element("resources", {"purpose": purpose, "language": language, "label": language})
+    for key, value in entries:
+        element = ElementTree.SubElement(root, "string", {"key": key})
+        element.text = value
+    tree = ElementTree.ElementTree(root)
+    tree.write(base_dir / STRING_RESOURCE_FILES[language], encoding="utf-8", xml_declaration=True)
+
+
+def test_uiux_string_xml_files_exist_with_expected_names() -> None:
+    strings_dir = Path("config") / "strings"
+
+    assert STRING_RESOURCE_FILES == {
+        "vi": "UIUX_VI_Strings.xml",
+        "en": "UIUX_EN_Strings.xml",
+        "jp": "UIUX_JP_Strings.xml",
+    }
+    for file_name in STRING_RESOURCE_FILES.values():
+        assert (strings_dir / file_name).exists()
+
+
+def test_language_labels_are_loaded_from_xml() -> None:
+    _, labels = _load_xml_strings()
+
+    assert LANGUAGE_LABELS == labels
 
 
 def test_all_translation_keys_support_all_languages() -> None:
@@ -182,6 +227,38 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         window.camera_manager.db.close()
     finally:
         set_language(original_language)
+
+
+def test_xml_loader_rejects_duplicate_string_keys(tmp_path) -> None:
+    _write_string_xml(tmp_path, "vi", [("app.title", "A"), ("app.title", "B")])
+    _write_string_xml(tmp_path, "en", [("app.title", "A")])
+    _write_string_xml(tmp_path, "jp", [("app.title", "A")])
+
+    with pytest.raises(ValueError, match="Duplicate string key"):
+        _load_xml_strings(tmp_path)
+
+
+def test_xml_loader_rejects_missing_file(tmp_path) -> None:
+    with pytest.raises(FileNotFoundError, match="Missing string resource file"):
+        _load_xml_strings(tmp_path)
+
+
+def test_xml_loader_rejects_missing_language_keys(tmp_path) -> None:
+    _write_string_xml(tmp_path, "vi", [("app.title", "A"), ("app.ready", "Ready")])
+    _write_string_xml(tmp_path, "en", [("app.title", "A")])
+    _write_string_xml(tmp_path, "jp", [("app.title", "A"), ("app.ready", "Ready")])
+
+    with pytest.raises(ValueError, match="String keys mismatch"):
+        _load_xml_strings(tmp_path)
+
+
+def test_xml_loader_rejects_wrong_purpose(tmp_path) -> None:
+    _write_string_xml(tmp_path, "vi", [("app.title", "A")], purpose="Backend")
+    _write_string_xml(tmp_path, "en", [("app.title", "A")])
+    _write_string_xml(tmp_path, "jp", [("app.title", "A")])
+
+    with pytest.raises(ValueError, match="Invalid string resource purpose"):
+        _load_xml_strings(tmp_path)
 
 
 def test_main_window_starts_blank_when_no_layout_exists(monkeypatch, tmp_path) -> None:
