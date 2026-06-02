@@ -7,6 +7,7 @@ from controllers.camera_placement_controller import CameraPlacementController
 from models.camera_data_model import Camera
 from models.drawing_shape_model import DrawingShape
 from views.camera_view_panel import CameraPanel
+from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
 from views.ui_theme import GRID_DARK, GRID_LIGHT
 
@@ -53,7 +54,7 @@ def test_drawing_created_signal_persists_shape() -> None:
     saved = manager.get_drawing_shapes()
     assert len(saved) == 1
     assert saved[0].id == shape.id
-    assert saved[0].layer_id == manager.default_layer_id("default", "drawings")
+    assert saved[0].layer_id == manager.first_layer_id("default")
     assert controller.current_layout_id == "default"
     app.processEvents()
 
@@ -68,6 +69,7 @@ def test_canvas_deletes_selected_drawing_shape() -> None:
 
     item = canvas.add_drawing_shape(shape, emit_created=True)
     assert item is not None
+    canvas.set_drawing_mode(DrawingMode.SELECT)
     item.setSelected(True)
 
     assert canvas.delete_selected_drawings() == 1
@@ -84,6 +86,7 @@ def test_canvas_unbinds_selected_camera_without_deleting_record() -> None:
     controller.load_cameras()
     controller.handle_camera_dropped("cam_01", 100.0, 100.0)
 
+    canvas.set_drawing_mode(DrawingMode.SELECT)
     canvas.camera_items["cam_01"].setSelected(True)
 
     assert canvas.delete_selected_drawings() == 1
@@ -104,6 +107,7 @@ def test_canvas_rotates_selected_camera() -> None:
     controller.load_cameras()
     controller.handle_camera_dropped("cam_01", 100.0, 100.0)
 
+    canvas.set_drawing_mode(DrawingMode.SELECT)
     canvas.camera_items["cam_01"].setSelected(True)
 
     assert canvas.rotate_selected_cameras(15.0) == 1
@@ -146,6 +150,7 @@ def test_canvas_moves_selected_camera_to_custom_layer() -> None:
     controller.handle_camera_dropped("cam_01", 100.0, 100.0)
 
     item = canvas.camera_items["cam_01"]
+    canvas.set_drawing_mode(DrawingMode.SELECT)
     item.setSelected(True)
 
     assert canvas.move_selected_items_to_layer(layer.id) == 1

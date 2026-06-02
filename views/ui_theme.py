@@ -8,6 +8,7 @@ DARK_BORDER = "#2f2f2f"
 DARK_HOVER = "#1a1a1a"
 DARK_ACTIVE_ROW = "#242424"
 LIGHT_BG = "#f8fafc"
+LIGHT_ACTIVE_ROW = "#ede9fe"
 LIGHT_TEXT = "#111827"
 LIGHT_BORDER = "#cbd5e1"
 TEXT_ON_DARK = "#f8fafc"
@@ -26,7 +27,52 @@ GRID_LIGHT = "#64748b"
 def app_stylesheet(light_theme: bool) -> str:
     """Return the global application stylesheet for the selected theme."""
     if light_theme:
-        return f"QWidget {{ background: {LIGHT_BG}; color: {LIGHT_TEXT}; }}"
+        return f"""
+            QWidget {{
+                background: {LIGHT_BG};
+                color: {LIGHT_TEXT};
+            }}
+            QMenuBar, QMenu, QStatusBar {{
+                background: #ffffff;
+                color: {LIGHT_TEXT};
+                border: 1px solid {LIGHT_BORDER};
+            }}
+            QMenu::item:selected {{
+                background: #e5e7eb;
+            }}
+            QDockWidget::title {{
+                background: #e5e7eb;
+                color: {LIGHT_TEXT};
+                padding: 5px;
+            }}
+            QTabWidget::pane {{
+                background: #ffffff;
+                border: 1px solid {LIGHT_BORDER};
+                border-radius: 6px;
+            }}
+            QTabBar::tab {{
+                background: #e5e7eb;
+                color: {LIGHT_TEXT};
+                border: 1px solid {LIGHT_BORDER};
+                padding: 8px 10px;
+                min-width: 82px;
+            }}
+            QTabBar::tab:selected {{
+                background: #ffffff;
+                color: {LIGHT_TEXT};
+                border-color: {PRIMARY_SOFT};
+            }}
+            QTabBar::tab:hover {{
+                background: #f1f5f9;
+            }}
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+                background: #ffffff;
+                color: {LIGHT_TEXT};
+                border: 1px solid {LIGHT_BORDER};
+                border-radius: 5px;
+                padding: 4px;
+            }}
+        """
     return f"""
         QMainWindow, QWidget {{
             background: {BLACK};
@@ -54,25 +100,59 @@ def app_stylesheet(light_theme: bool) -> str:
             color: {TEXT_ON_DARK};
             padding: 5px;
         }}
+        QTabWidget::pane {{
+            background: {DARK_SURFACE};
+            border: 1px solid {DARK_BORDER};
+            border-radius: 6px;
+        }}
+        QTabBar::tab {{
+            background: {DARK_SURFACE_ALT};
+            color: {TEXT_ON_DARK};
+            border: 1px solid {DARK_BORDER};
+            padding: 8px 10px;
+            min-width: 82px;
+        }}
+        QTabBar::tab:selected {{
+            background: {DARK_ACTIVE_ROW};
+            color: {TEXT_ON_DARK};
+            border-color: {PRIMARY_SOFT};
+        }}
+        QTabBar::tab:hover {{
+            background: {DARK_HOVER};
+        }}
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+            background: {DARK_SURFACE_ALT};
+            color: {TEXT_ON_DARK};
+            border: 1px solid {DARK_BORDER};
+            border-radius: 5px;
+            padding: 4px;
+        }}
     """
 
 
-def control_panel_stylesheet() -> str:
+def control_panel_stylesheet(light_theme: bool = False) -> str:
     """Return styles for the combined camera/layout control panel."""
+    panel = LIGHT_BG if light_theme else DARK_PANEL
+    surface = "#ffffff" if light_theme else DARK_SURFACE_ALT
+    hover = "#e5e7eb" if light_theme else DARK_HOVER
+    active = "#ddd6fe" if light_theme else DARK_ACTIVE_ROW
+    border = LIGHT_BORDER if light_theme else DARK_BORDER
+    text = LIGHT_TEXT if light_theme else TEXT_ON_DARK
+    selected_text = LIGHT_TEXT if light_theme else TEXT_WHITE
     return f"""
         QWidget#controlLayoutPanel {{
-            background: {DARK_PANEL};
-            color: {TEXT_ON_DARK};
+            background: {panel};
+            color: {text};
         }}
         QLabel#sectionTitle {{
-            color: {TEXT_ON_DARK};
+            color: {text};
             font-weight: 700;
             padding: 2px 0;
         }}
         QComboBox, QLineEdit, QTreeWidget {{
-            background: {DARK_SURFACE_ALT};
-            color: {TEXT_ON_DARK};
-            border: 1px solid {DARK_BORDER};
+            background: {surface};
+            color: {text};
+            border: 1px solid {border};
             border-radius: 7px;
             padding: 5px;
         }}
@@ -81,20 +161,20 @@ def control_panel_stylesheet() -> str:
             padding: 3px;
         }}
         QTreeWidget::item:hover {{
-            background: {DARK_HOVER};
+            background: {hover};
         }}
         QTreeWidget::item:selected {{
-            background: {DARK_ACTIVE_ROW};
-            color: {TEXT_WHITE};
+            background: {active};
+            color: {selected_text};
         }}
         QToolButton {{
-            background: {DARK_SURFACE_ALT};
-            border: 1px solid {DARK_BORDER};
+            background: {surface};
+            border: 1px solid {border};
             border-radius: 7px;
             padding: 3px;
         }}
         QToolButton:hover {{
-            background: {DARK_HOVER};
+            background: {hover};
             border-color: {PRIMARY_FOCUS};
         }}
         QToolButton:checked {{
@@ -104,22 +184,27 @@ def control_panel_stylesheet() -> str:
     """
 
 
-def drawing_tools_stylesheet() -> str:
+def drawing_tools_stylesheet(light_theme: bool = False) -> str:
     """Return styles for the fixed floating drawing tools panel."""
+    panel = "rgba(255, 255, 255, 242)" if light_theme else "rgba(0, 0, 0, 238)"
+    surface = "#ffffff" if light_theme else DARK_SURFACE_ALT
+    hover = "#e5e7eb" if light_theme else DARK_HOVER
+    border = LIGHT_BORDER if light_theme else DARK_BORDER
+    text = LIGHT_TEXT if light_theme else TEXT_ON_DARK
     return f"""
         QWidget#drawingToolsPanel {{
-            background: rgba(0, 0, 0, 238);
-            border: 1px solid {DARK_BORDER};
+            background: {panel};
+            border: 1px solid {border};
             border-radius: 10px;
         }}
         QToolButton {{
-            background: {DARK_SURFACE_ALT};
-            border: 1px solid {DARK_BORDER};
+            background: {surface};
+            border: 1px solid {border};
             border-radius: 7px;
             padding: 4px;
         }}
         QToolButton:hover {{
-            background: {DARK_HOVER};
+            background: {hover};
             border-color: {PRIMARY_FOCUS};
         }}
         QToolButton:checked {{
@@ -127,46 +212,66 @@ def drawing_tools_stylesheet() -> str:
             border-color: {PRIMARY_FOCUS};
         }}
         QMenu {{
-            background: {DARK_PANEL};
-            color: {TEXT_ON_DARK};
-            border: 1px solid {DARK_BORDER};
+            background: {surface};
+            color: {text};
+            border: 1px solid {border};
             padding: 4px;
         }}
         QMenu::item {{
-            padding: 6px 18px;
+            padding: 6px 20px;
         }}
         QMenu::item:selected {{
-            background: {DARK_HOVER};
+            background: {hover};
+        }}
+        QMenu::indicator {{
+            width: 12px;
+            height: 12px;
+            border: 1px solid {border};
+            border-radius: 6px;
+        }}
+        QMenu::indicator:checked {{
+            background: {PRIMARY_SOFT};
+            border-color: {PRIMARY_FOCUS};
         }}
     """
 
 
-def layers_panel_stylesheet() -> str:
+def layers_panel_stylesheet(light_theme: bool = False) -> str:
     """Return styles for the layers panel tree, checkboxes, and action row."""
+    panel = LIGHT_BG if light_theme else DARK_PANEL
+    surface = "#ffffff" if light_theme else DARK_SURFACE_ALT
+    alt = "#f1f5f9" if light_theme else DARK_SURFACE
+    header = "#e5e7eb" if light_theme else DARK_ACTIVE_ROW
+    hover = "#e5e7eb" if light_theme else DARK_HOVER
+    active = LIGHT_ACTIVE_ROW if light_theme else DARK_ACTIVE_ROW
+    border = LIGHT_BORDER if light_theme else DARK_BORDER
+    text = LIGHT_TEXT if light_theme else TEXT_ON_DARK
+    selected_text = LIGHT_TEXT if light_theme else TEXT_WHITE
+    checkbox_bg = "#ffffff" if light_theme else BLACK
     return f"""
         QWidget#layersPanel {{
-            background: {DARK_PANEL};
-            color: {TEXT_ON_DARK};
+            background: {panel};
+            color: {text};
         }}
         QLabel#sectionTitle {{
-            color: {TEXT_ON_DARK};
+            color: {text};
             font-weight: 700;
             padding: 2px 0;
         }}
         QTreeWidget#layersTree {{
-            background: {DARK_SURFACE_ALT};
-            color: {TEXT_ON_DARK};
-            border: 1px solid {DARK_BORDER};
+            background: {surface};
+            color: {text};
+            border: 1px solid {border};
             border-radius: 8px;
-            alternate-background-color: {DARK_SURFACE};
-            selection-background-color: {DARK_ACTIVE_ROW};
-            selection-color: {TEXT_WHITE};
+            alternate-background-color: {alt};
+            selection-background-color: {active};
+            selection-color: {selected_text};
         }}
         QHeaderView::section {{
-            background: {DARK_ACTIVE_ROW};
-            color: {TEXT_ON_DARK};
+            background: {header};
+            color: {text};
             border: 0;
-            border-right: 1px solid {DARK_BORDER};
+            border-right: 1px solid {border};
             padding: 5px;
         }}
         QTreeWidget::item {{
@@ -174,7 +279,7 @@ def layers_panel_stylesheet() -> str:
             padding: 3px;
         }}
         QTreeWidget::item:hover {{
-            background: {DARK_HOVER};
+            background: {hover};
         }}
         QCheckBox {{
             background: transparent;
@@ -184,8 +289,8 @@ def layers_panel_stylesheet() -> str:
             width: 18px;
             height: 18px;
             border-radius: 5px;
-            border: 2px solid {TEXT_ON_DARK};
-            background: {BLACK};
+            border: 2px solid {text};
+            background: {checkbox_bg};
         }}
         QCheckBox::indicator:checked {{
             background: {PRIMARY_SOFT};
@@ -195,13 +300,13 @@ def layers_panel_stylesheet() -> str:
             border-color: {PRIMARY_FOCUS};
         }}
         QToolButton {{
-            background: {DARK_SURFACE_ALT};
-            border: 1px solid {DARK_BORDER};
+            background: {surface};
+            border: 1px solid {border};
             border-radius: 6px;
             padding: 3px;
         }}
         QToolButton:hover {{
-            background: {DARK_HOVER};
+            background: {hover};
             border-color: {PRIMARY_FOCUS};
         }}
     """

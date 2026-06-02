@@ -8,21 +8,22 @@ from PyQt6.QtWidgets import QColorDialog, QFileDialog, QMainWindow, QMessageBox,
 from config.i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, get_language, set_language, t
 from controllers.camera_data_manager import CameraDataManager
 from controllers.camera_placement_controller import CameraPlacementController
+from services.app_settings_service import load_app_settings
 from services.network_ping_service import PingService
 from utils.image_assets import import_png_asset
+from views import confirm_dialog
 from views.app_camera_actions import AppCameraActions
 from views.app_docks import AppDocks
 from views.app_layout_actions import AppLayoutActions
+from views.app_package_actions import AppPackageActions
 from views.app_settings_actions import AppSettingsActions
-from views.app_toolbars import AppToolbars
-from views.layer_state import ALL_LAYERS
 from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
 from views.status_dashboard import StatusDashboard
 from views.text_annotation_dialog import TextAnnotationDialog
 
 
-class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDocks, AppToolbars, QMainWindow):
+class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCameraActions, AppDocks, QMainWindow):
     """Top-level window that wires the map canvas, sidebar, menus, and controller."""
 
     def __init__(self) -> None:
@@ -37,16 +38,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.map_canvas = MapCanvas(self)
         self.current_layout_id = "default"
         self.current_background_path = ""
-        self.settings = {
-            "ping_interval": 30,
-            "ping_timeout": 1.0,
-            "ping_retries": 1,
-            "canvas_width": 4000,
-            "canvas_height": 3000,
-            "grid_size": 20,
-            "background_scale": 1.0,
-            "light_theme": False,
-        }
+        self.settings = load_app_settings()
         self.main_layout.addWidget(self.map_canvas)
         self.status_dashboard = StatusDashboard(self)
         self.main_layout.addWidget(self.status_dashboard)
@@ -57,15 +49,21 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.camera_manager = CameraDataManager()
+        layout = self.camera_manager.get_layout(self.current_layout_id)
+        if layout is not None:
+            self.apply_layout_to_canvas(layout)
         self.init_layouts_dock()
         self.init_layers_dock()
         self.add_widget_reopen_actions()
         self.retranslate()
+        self.apply_theme()
         self.status_bar.showMessage(t("app.ready"), 5000)
 
         self.ping_service = PingService(
             self.camera_manager.get_all_cameras_for_ping(),
-            interval_seconds=30,
+            interval_seconds=int(self.settings["ping_interval"]),
+            timeout_seconds=float(self.settings["ping_timeout"]),
+            retries=int(self.settings["ping_retries"]),
         )
         self.camera_controller = CameraPlacementController(
             self.camera_panel,
@@ -103,6 +101,12 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.settings_action = QAction(self)
         self.settings_action.triggered.connect(self.open_settings)
 
+        self.import_package_action = QAction(self)
+        self.import_package_action.triggered.connect(self.import_map_package_file)
+
+        self.export_package_action = QAction(self)
+        self.export_package_action.triggered.connect(self.export_current_map_package)
+
         self.zoom_in_action = QAction(self)
         self.zoom_in_action.setShortcut("Ctrl++")
         self.zoom_in_action.triggered.connect(lambda: self.map_canvas.scale(1.25, 1.25))
@@ -115,10 +119,15 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.zoom_fit_action.setShortcut("Ctrl+0")
         self.zoom_fit_action.triggered.connect(self.map_canvas.fit_in_view)
 
+        self.pan_action = QAction(self)
+        self.pan_action.setObjectName("pan")
+        self.pan_action.setCheckable(True)
+        self.pan_action.setChecked(True)
+        self.pan_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.PAN))
+
         self.select_action = QAction(self)
         self.select_action.setObjectName("select")
         self.select_action.setCheckable(True)
-        self.select_action.setChecked(True)
         self.select_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.SELECT))
 
         self.draw_line_action = QAction(self)
@@ -189,6 +198,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.file_menu.addAction(self.open_action)
         self.file_menu.addAction(self.unload_map_action)
         self.file_menu.addSeparator()
+        self.file_menu.addAction(self.import_package_action)
+        self.file_menu.addAction(self.export_package_action)
+        self.file_menu.addSeparator()
         self.file_menu.addAction(self.exit_action)
 
         self.view_menu = self.menuBar().addMenu("")
@@ -198,38 +210,16 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.view_menu.addSeparator()
         self.view_menu.addAction(self.grid_action)
 
-        self.draw_menu = self.menuBar().addMenu("")
-        for action in [
-            self.select_action,
-            self.draw_line_action,
-            self.draw_rectangle_action,
-            self.draw_zone_action,
-            self.draw_freehand_action,
-        ]:
-            self.draw_menu.addAction(action)
-
-        self.annotate_menu = self.menuBar().addMenu("")
-        for action in [
-            self.add_text_action,
-            self.insert_png_action,
-            self.choose_color_action,
-            self.delete_selected_action,
-            self.rotate_camera_action,
-        ]:
-            self.annotate_menu.addAction(action)
-        self.annotate_menu.addSeparator()
-        for action in self.info_actions.values():
-            self.annotate_menu.addAction(action)
-
         self.language_menu = self.menuBar().addMenu("")
         for action in self.language_actions.values():
             self.language_menu.addAction(action)
 
-        self.init_main_toolbar()
+        self.menuBar().addAction(self.settings_action)
         self.init_drawing_tools_dock()
 
     def set_canvas_mode(self, mode: DrawingMode) -> None:
         mode_actions = {
+            DrawingMode.PAN: self.pan_action,
             DrawingMode.SELECT: self.select_action,
             DrawingMode.LINE: self.draw_line_action,
             DrawingMode.RECTANGLE: self.draw_rectangle_action,
@@ -324,14 +314,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.status_bar.showMessage(t("status.map_unloaded"), 5000)
 
     def _confirm(self, title: str, message: str) -> bool:
-        result = QMessageBox.question(
-            self,
-            title,
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return result == QMessageBox.StandardButton.Yes
+        return confirm_dialog.confirm(self, title, message)
 
     def showEvent(self, event: object) -> None:
         super().showEvent(event)
@@ -364,16 +347,21 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.setWindowTitle(t("app.title"))
         if hasattr(self, "dock"):
             self.dock.setWindowTitle(t("dock.control_panel"))
+            self.control_dock_title.set_title(t("dock.control_panel"))
         if hasattr(self, "layers_dock"):
             self.layers_dock.setWindowTitle(t("dock.layers"))
+            self.layers_dock_title.set_title(t("dock.layers"))
         if hasattr(self, "open_action"):
             self.open_action.setText(t("action.open_map"))
             self.unload_map_action.setText(t("action.unload_map"))
+            self.import_package_action.setText(t("action.import_package"))
+            self.export_package_action.setText(t("action.export_package"))
             self.exit_action.setText(t("action.exit"))
             self.zoom_in_action.setText(t("action.zoom_in"))
             self.zoom_out_action.setText(t("action.zoom_out"))
             self.zoom_fit_action.setText(t("action.zoom_fit"))
             self.settings_action.setText(t("action.settings"))
+            self.pan_action.setText(t("action.pan"))
             self.select_action.setText(t("action.select"))
             self.draw_line_action.setText(t("action.draw_line"))
             self.draw_rectangle_action.setText(t("action.draw_rectangle"))
@@ -391,13 +379,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
             self.info_actions["dvr"].setText(t("action.show_dvr"))
             self.file_menu.setTitle(t("menu.file"))
             self.view_menu.setTitle(t("menu.view"))
-            self.draw_menu.setTitle(t("menu.draw"))
-            self.annotate_menu.setTitle(t("menu.annotate"))
             self.language_menu.setTitle(t("menu.language"))
             if hasattr(self, "drawing_tools_view_action"):
                 self.drawing_tools_view_action.setText(t("dock.drawing_tools"))
-            self.retranslate_toolbars()
-            self.map_canvas.set_default_layer_names({layer_id: t(f"layer.{layer_id}") for layer_id in ALL_LAYERS})
             if hasattr(self, "layers_panel"):
                 self.layers_panel.retranslate()
                 self.layers_panel.refresh()

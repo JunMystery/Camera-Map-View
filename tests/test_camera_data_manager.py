@@ -4,6 +4,8 @@ from controllers.camera_data_manager import CameraDataManager
 from models.camera_data_model import Camera
 from models.camera_db_manager import CameraDbManager
 from models.drawing_shape_model import DrawingShape
+from services.map_package_service import export_map_package, import_map_package
+from zipfile import ZipFile
 
 
 def test_add_and_fetch_camera() -> None:
@@ -46,23 +48,43 @@ def test_update_camera_position_marks_camera_as_placed() -> None:
     assert unplaced == []
     assert placed[0].position_x == 12.5
     assert placed[0].position_y == 34.5
-    assert placed[0].layer_id == manager.default_layer_id("default", "cameras")
+    assert placed[0].layer_id == manager.first_layer_id("default")
 
 
-def test_default_layers_and_membership_are_created() -> None:
+def test_base_layer_and_membership_are_created() -> None:
     manager = CameraDataManager(":memory:")
     manager.add_camera(Camera("cam_test", "Lobby", "10.0.0.10"))
     manager.add_drawing_shape(DrawingShape("shape_test", "Text", [0.0, 0.0], label="Note"))
 
     layers = manager.get_layers()
 
-    assert [layer.name for layer in layers] == ["Cameras", "Drawings", "Images", "Text"]
-    assert manager.get_camera("cam_test").layer_id == manager.default_layer_id("default", "cameras")
-    assert manager.get_drawing_shapes()[0].layer_id == manager.default_layer_id("default", "text")
+    assert [layer.name for layer in layers] == ["Layer 1"]
+    assert manager.get_camera("cam_test").layer_id == layers[0].id
+    assert manager.get_drawing_shapes()[0].layer_id == layers[0].id
+
+
+def test_legacy_default_layers_migrate_to_single_user_layer() -> None:
+    manager = CameraDataManager(":memory:")
+    for position, kind in enumerate(("cameras", "drawings", "images", "text")):
+        manager.db.execute(
+            "INSERT INTO canvas_layers (id, layout_id, name, position) VALUES (?, ?, ?, ?)",
+            (manager.default_layer_id("default", kind), "default", kind.title(), position),
+        )
+    manager.add_camera(Camera("cam_legacy", "Legacy", "10.0.0.40", layer_id=manager.default_layer_id("default", "cameras")))
+    manager.add_drawing_shape(
+        DrawingShape("shape_legacy", "Text", [0.0, 0.0], label="Old", layer_id=manager.default_layer_id("default", "text"))
+    )
+
+    layers = manager.get_layers()
+
+    assert [layer.name for layer in layers] == ["Layer 1"]
+    assert manager.get_camera("cam_legacy").layer_id == layers[0].id
+    assert manager.get_drawing_shapes()[0].layer_id == layers[0].id
 
 
 def test_layer_crud_reorder_and_delete_contents() -> None:
     manager = CameraDataManager(":memory:")
+    manager.get_layers()
     layer = manager.create_layer("Custom")
     camera = Camera("cam_test", "Lobby", "10.0.0.10", layer_id=layer.id)
     shape = DrawingShape("shape_test", "Line", [0.0, 0.0, 1.0, 1.0], layer_id=layer.id)
@@ -147,7 +169,7 @@ def test_add_and_fetch_drawing_shape() -> None:
     saved_shapes = manager.get_drawing_shapes()
     assert len(saved_shapes) == 1
     assert saved_shapes[0].id == shape.id
-    assert saved_shapes[0].layer_id == manager.default_layer_id("default", "images")
+    assert saved_shapes[0].layer_id == manager.first_layer_id("default")
     assert manager.delete_drawing_shape("shape_test")
     assert manager.get_drawing_shapes() == []
 
@@ -219,3 +241,51 @@ def test_layout_crud_and_data_isolation() -> None:
     assert manager.delete_layout(layout.id)
     assert manager.get_all_cameras(layout.id) == []
     assert manager.get_drawing_shapes(layout.id) == []
+
+
+def test_map_package_export_and_import_current_layout(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    manager = CameraDataManager(":memory:")
+    layout = manager.get_layout("default")
+    assert layout is not None
+    background = tmp_path / "map.png"
+    background.write_bytes(b"map")
+    image = tmp_path / "note.png"
+    image.write_bytes(b"png")
+    layout.background_path = str(background)
+    layout.canvas_width = 1200
+    manager.update_layout(layout)
+    manager.add_camera(Camera("cam_pkg", "Package Cam", "10.0.0.30"), is_placed=True)
+    shape = DrawingShape("shape_pkg", "Image", [1.0, 2.0, 30.0, 40.0], image_path=str(image))
+    manager.add_drawing_shape(shape)
+    cameras = []
+    for camera in manager.get_all_cameras():
+        row = camera.to_dict()
+        row["is_placed"] = camera.id in {item.id for item in manager.get_placed_cameras()}
+        cameras.append(row)
+    package = tmp_path / "map.cmvmap"
+
+    assert export_map_package(
+        package,
+        layout,
+        {"grid_size": 20},
+        {"name": True},
+        cameras,
+        manager.get_layers(),
+        manager.get_drawing_shapes(),
+    )
+
+    with ZipFile(package) as archive:
+        assert "manifest.json" in archive.namelist()
+        assert any(name.startswith("assets/background_") for name in archive.namelist())
+        assert any(name.startswith("assets/drawing_shape_pkg_") for name in archive.namelist())
+
+    imported_id = import_map_package(package, manager)
+
+    assert imported_id and imported_id != "default"
+    imported_layout = manager.get_layout(imported_id)
+    assert imported_layout is not None
+    assert imported_layout.canvas_width == 1200
+    assert imported_layout.background_path
+    assert manager.get_placed_cameras(imported_id)
+    assert manager.get_drawing_shapes(imported_id)

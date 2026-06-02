@@ -3,23 +3,24 @@
 import sqlite3
 import uuid
 
-from models.canvas_layer_model import CanvasLayer, DEFAULT_LAYER_NAMES
+from models.canvas_layer_model import CanvasLayer
 
 
 class CameraLayerOperations:
     """Manage per-layout canvas layers and object membership."""
 
     def ensure_default_layers(self, layout_id: str = "default") -> None:
-        """Create default layers and assign unlayered objects by type."""
+        """Create a Photoshop-like base layer and migrate legacy grouped layers."""
         if not self._layout_exists(layout_id):
             return
-        for position, (kind, name) in enumerate(DEFAULT_LAYER_NAMES.items()):
+        self._migrate_legacy_default_layers(layout_id)
+        if not self._layer_rows(layout_id):
             self.db.execute(
                 """
-                INSERT OR IGNORE INTO canvas_layers (id, layout_id, name, position)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (self.default_layer_id(layout_id, kind), layout_id, name, position),
+                (self._new_layer_id(), layout_id, "Layer 1", 0, 1, 0),
             )
         self._assign_default_memberships(layout_id)
 
@@ -29,13 +30,13 @@ class CameraLayerOperations:
 
     def create_layer(self, name: str, layout_id: str = "default") -> CanvasLayer:
         """Create a new empty layer at the top of the layout stack."""
-        self.ensure_default_layers(layout_id)
+        self._migrate_legacy_default_layers(layout_id)
         row = self.db.fetch_one(
             "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM canvas_layers WHERE layout_id = ?",
             (layout_id,),
         )
         layer = CanvasLayer(
-            id=f"layer_{uuid.uuid4().hex}",
+            id=self._new_layer_id(),
             layout_id=layout_id,
             name=name.strip() or "Layer",
             position=int(row["next_position"] if row else 0),
@@ -133,26 +134,75 @@ class CameraLayerOperations:
         return counts
 
     def _assign_default_memberships(self, layout_id: str) -> None:
-        camera_layer = self.default_layer_id(layout_id, "cameras")
-        drawings_layer = self.default_layer_id(layout_id, "drawings")
-        images_layer = self.default_layer_id(layout_id, "images")
-        text_layer = self.default_layer_id(layout_id, "text")
+        layer_id = self.first_layer_id(layout_id)
+        if not layer_id:
+            return
         self.db.execute(
             "UPDATE cameras SET layer_id = ? WHERE layout_id = ? AND COALESCE(layer_id, '') = ''",
-            (camera_layer, layout_id),
+            (layer_id, layout_id),
         )
         self.db.execute(
-            """
-            UPDATE drawing_shapes
-            SET layer_id = CASE
-                WHEN shape_type = 'Image' THEN ?
-                WHEN shape_type = 'Text' THEN ?
-                ELSE ?
-            END
-            WHERE layout_id = ? AND COALESCE(layer_id, '') = ''
-            """,
-            (images_layer, text_layer, drawings_layer, layout_id),
+            "UPDATE drawing_shapes SET layer_id = ? WHERE layout_id = ? AND COALESCE(layer_id, '') = ''",
+            (layer_id, layout_id),
         )
+
+    def first_layer_id(self, layout_id: str = "default") -> str:
+        """Return the first user layer for a layout."""
+        row = self.db.fetch_one(
+            "SELECT id FROM canvas_layers WHERE layout_id = ? ORDER BY position, name LIMIT 1",
+            (layout_id,),
+        )
+        return str(row["id"]) if row else ""
+
+    def _migrate_legacy_default_layers(self, layout_id: str) -> None:
+        legacy_ids = [self.default_layer_id(layout_id, kind) for kind in ("cameras", "drawings", "images", "text")]
+        legacy_rows = [
+            row for row in self._layer_rows(layout_id)
+            if row["id"] in legacy_ids
+        ]
+        if not legacy_rows:
+            return
+        target_id = next(
+            (row["id"] for row in self._layer_rows(layout_id) if row["id"] not in legacy_ids),
+            "",
+        )
+        if not target_id:
+            target_id = self._new_layer_id()
+            self.db.execute(
+                """
+                INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (target_id, layout_id, "Layer 1", 0, 1, 0),
+            )
+        placeholders = ",".join("?" for _ in legacy_ids)
+        params = (target_id, layout_id, *legacy_ids)
+        self.db.execute(
+            f"UPDATE cameras SET layer_id = ? WHERE layout_id = ? AND layer_id IN ({placeholders})",
+            params,
+        )
+        self.db.execute(
+            f"UPDATE drawing_shapes SET layer_id = ? WHERE layout_id = ? AND layer_id IN ({placeholders})",
+            params,
+        )
+        self.db.execute(
+            f"DELETE FROM canvas_layers WHERE layout_id = ? AND id IN ({placeholders})",
+            (layout_id, *legacy_ids),
+        )
+        self._normalize_positions(layout_id)
+
+    def _layer_rows(self, layout_id: str) -> list[sqlite3.Row]:
+        return self.db.fetch_all(
+            "SELECT id, layout_id, name, position, visible, locked FROM canvas_layers WHERE layout_id = ?",
+            (layout_id,),
+        )
+
+    def _normalize_positions(self, layout_id: str) -> None:
+        for position, layer in enumerate(self.get_layers(layout_id)):
+            self.db.execute("UPDATE canvas_layers SET position = ? WHERE id = ?", (position, layer.id))
+
+    def _new_layer_id(self) -> str:
+        return f"layer_{uuid.uuid4().hex}"
 
     def _layout_exists(self, layout_id: str) -> bool:
         return self.db.fetch_one("SELECT id FROM map_layouts WHERE id = ?", (layout_id,)) is not None

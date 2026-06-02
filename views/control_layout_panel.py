@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QSizePolicy,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -20,7 +21,7 @@ from config.i18n import t
 from models.camera_data_model import Camera
 from models.map_layout_model import MapLayout
 from views.tool_icons import tool_icon
-from views.ui_theme import PRIMARY, TEXT_WHITE, control_panel_stylesheet
+from views.ui_theme import LIGHT_TEXT, PRIMARY, TEXT_ON_DARK, TEXT_WHITE, control_panel_stylesheet
 
 
 class CameraTreeWidget(QTreeWidget):
@@ -70,6 +71,7 @@ class ControlLayoutPanel(QWidget):
         self.placed_ids: set[str] = set()
         self.show_placed = False
         self.layouts: list[MapLayout] = []
+        self._icon_color = TEXT_ON_DARK
         self._build_ui()
         self.retranslate()
 
@@ -135,6 +137,8 @@ class ControlLayoutPanel(QWidget):
         self.search_input.setPlaceholderText(t("camera_panel.search"))
         self.unplaced_button.setToolTip(t("camera_panel.unplaced"))
         self.placed_button.setToolTip(t("camera_panel.placed"))
+        self.unplaced_button.setText(t("camera_panel.unplaced"))
+        self.placed_button.setText(t("camera_panel.placed"))
         self.add_layout_button.setToolTip(t("layout.add"))
         self.rename_layout_button.setToolTip(t("layout.rename"))
         self.delete_layout_button.setToolTip(t("layout.delete"))
@@ -160,7 +164,7 @@ class ControlLayoutPanel(QWidget):
         self.layout_combo.currentIndexChanged.connect(self._emit_selected_layout)
         layout_row.addWidget(self.layout_combo, 1)
         self.add_layout_button = self._tool_button("add_layout")
-        self.rename_layout_button = self._tool_button("rename")
+        self.rename_layout_button = self._tool_button("cog")
         self.delete_layout_button = self._tool_button("delete")
         self.add_layout_button.clicked.connect(self.layout_add_requested.emit)
         self.rename_layout_button.clicked.connect(lambda: self.layout_rename_requested.emit(self.current_layout_id()))
@@ -178,8 +182,8 @@ class ControlLayoutPanel(QWidget):
         layout.addWidget(self.search_input)
 
         mode_row = QHBoxLayout()
-        self.unplaced_button = self._mode_button("camera")
-        self.placed_button = self._mode_button("check")
+        self.unplaced_button = self._mode_button()
+        self.placed_button = self._mode_button()
         self.unplaced_button.clicked.connect(lambda: self._set_mode(False))
         self.placed_button.clicked.connect(lambda: self._set_mode(True))
         mode_row.addWidget(self.unplaced_button)
@@ -196,7 +200,7 @@ class ControlLayoutPanel(QWidget):
         action_row = QHBoxLayout()
         action_row.setSpacing(5)
         self.add_button = self._tool_button("add_camera")
-        self.edit_button = self._tool_button("edit")
+        self.edit_button = self._tool_button("cog")
         self.delete_button = self._tool_button("delete")
         self.import_button = self._tool_button("import")
         self.export_button = self._tool_button("export")
@@ -212,15 +216,18 @@ class ControlLayoutPanel(QWidget):
 
     def _tool_button(self, icon_name: str) -> QToolButton:
         button = QToolButton(self)
-        button.setIcon(tool_icon(icon_name))
+        button.setProperty("icon_name", icon_name)
+        button.setIcon(self._icon(icon_name))
         button.setIconSize(QSize(22, 22))
         button.setFixedSize(32, 30)
         return button
 
-    def _mode_button(self, icon_name: str) -> QToolButton:
-        button = self._tool_button(icon_name)
+    def _mode_button(self) -> QToolButton:
+        button = QToolButton(self)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         button.setCheckable(True)
-        button.setFixedHeight(34)
+        button.setMinimumHeight(34)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return button
 
     def _separator(self) -> QFrame:
@@ -263,4 +270,19 @@ class ControlLayoutPanel(QWidget):
         return groups
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(control_panel_stylesheet())
+        self.apply_theme(False)
+
+    def apply_theme(self, light_theme: bool) -> None:
+        """Apply the shared application palette to the panel."""
+        self._icon_color = LIGHT_TEXT if light_theme else TEXT_ON_DARK
+        self.setStyleSheet(control_panel_stylesheet(light_theme))
+        self._refresh_icons()
+
+    def _icon(self, icon_name: str):
+        return tool_icon(icon_name, color=self._icon_color)
+
+    def _refresh_icons(self) -> None:
+        for button in self.findChildren(QToolButton):
+            icon_name = button.property("icon_name")
+            if icon_name:
+                button.setIcon(self._icon(str(icon_name)))

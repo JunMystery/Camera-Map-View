@@ -119,6 +119,8 @@ class MapCanvasActions:
             if item.data(1) == "drawing":
                 shape_id = item.data(0)
                 self.scene.removeItem(item)
+                self.pan_item_flags.pop(item, None)
+                self.item_default_flags.pop(item, None)
                 if shape_id:
                     self.drawing_deleted.emit(str(shape_id))
                 deleted += 1
@@ -126,8 +128,12 @@ class MapCanvasActions:
                 camera_id = item.camera.id
                 self.scene.removeItem(item)
                 self.camera_items.pop(camera_id, None)
+                self.pan_item_flags.pop(item, None)
+                self.item_default_flags.pop(item, None)
                 self.camera_deleted.emit(camera_id)
                 deleted += 1
+        if deleted:
+            self.layers_changed.emit()
         return deleted
 
     def rotate_selected_cameras(self, degrees: float = 15.0) -> int:
@@ -141,15 +147,21 @@ class MapCanvasActions:
             item.update()
             self.camera_rotated.emit(item.camera.id, item.camera.rotation)
             rotated += 1
+        if rotated:
+            self.layers_changed.emit()
         return rotated
 
     def clear_map_items(self) -> None:
         """Remove cameras and annotation items for a layout switch."""
         for item in list(self.scene.items()):
             if item.data(1) in {"camera", "drawing"}:
+                self.pan_item_flags.pop(item, None)
+                self.item_default_flags.pop(item, None)
                 self.scene.removeItem(item)
         self.camera_items.clear()
         self.item_default_flags.clear()
+        self.pan_item_flags.clear()
+        self.layers_changed.emit()
 
     def get_layer_states(self) -> list[LayerState]:
         """Return the current grouped layer states for UI panels."""
@@ -194,7 +206,10 @@ class MapCanvasActions:
         layer_id = self._resolve_layer_id(layer_id)
         if layer_id not in self.layer_display_names:
             return False
+        changed = self.active_layer_id != layer_id
         self.active_layer_id = layer_id
+        if changed:
+            self.layers_changed.emit()
         return True
 
     def set_layer_visible(self, layer_id: str, visible: bool) -> None:
@@ -205,6 +220,7 @@ class MapCanvasActions:
             self.grid_visible = visible
         for item in self._items_for_layer(layer_id):
             item.setVisible(visible)
+        self.layers_changed.emit()
 
     def set_layer_locked(self, layer_id: str, locked: bool) -> None:
         """Enable or disable selection and movement for a layer."""
@@ -212,6 +228,8 @@ class MapCanvasActions:
         self.layer_locked[layer_id] = locked
         for item in self._items_for_layer(layer_id):
             self._set_item_locked(item, locked)
+        self._set_item_interaction_suspended(getattr(self, "item_interaction_suspended", False))
+        self.layers_changed.emit()
 
     def select_layer_items(self, layer_id: str) -> int:
         """Select all visible, unlocked items in a layer."""
@@ -243,12 +261,16 @@ class MapCanvasActions:
             object_type = item.data(1)
             object_id = item.data(0)
             self.scene.removeItem(item)
+            self.pan_item_flags.pop(item, None)
+            self.item_default_flags.pop(item, None)
             if object_type == "camera" and isinstance(item, CameraItem):
                 self.camera_items.pop(item.camera.id, None)
                 self.camera_deleted.emit(item.camera.id)
             elif object_id:
                 self.drawing_deleted.emit(str(object_id))
             deleted += 1
+        if deleted:
+            self.layers_changed.emit()
         return deleted
 
     def rename_layer(self, layer_id: str, display_name: str) -> None:
@@ -256,6 +278,7 @@ class MapCanvasActions:
         layer_id = self._resolve_layer_id(layer_id)
         if display_name.strip():
             self.layer_display_names[layer_id] = display_name.strip()
+            self.layers_changed.emit()
 
     def set_default_layer_names(self, names: dict[str, str]) -> None:
         """Update translated default names without overwriting custom names."""
@@ -280,6 +303,7 @@ class MapCanvasActions:
             self.annotation_layer_order[current_index],
         )
         self.apply_layer_z_values()
+        self.layers_changed.emit()
         return True
 
     def apply_layer_z_values(self) -> None:
@@ -311,6 +335,8 @@ class MapCanvasActions:
                 self.object_layer_changed.emit("drawing", str(object_id), layer_id)
                 moved += 1
         self.apply_layer_z_values()
+        if moved:
+            self.layers_changed.emit()
         return moved
 
     def select_layer_object(self, object_type: str, object_id: str) -> bool:

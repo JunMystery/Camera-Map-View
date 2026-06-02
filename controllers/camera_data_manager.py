@@ -50,10 +50,10 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             SET pos_x = ?,
                 pos_y = ?,
                 is_placed = 1,
-                layer_id = CASE WHEN COALESCE(layer_id, '') = '' THEN 'layer_' || layout_id || '_cameras' ELSE layer_id END
+                layer_id = CASE WHEN COALESCE(layer_id, '') = '' THEN ? ELSE layer_id END
             WHERE id = ?
             """,
-            (x, y, camera_id),
+            (x, y, self._camera_fallback_layer_id(camera_id), camera_id),
         )
         return cursor.rowcount > 0
 
@@ -139,8 +139,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
         cursor = self.db.execute(
             """
             UPDATE cameras
-            SET is_placed = 0,
-                layer_id = CASE WHEN layout_id IS NULL THEN layer_id ELSE 'layer_' || layout_id || '_cameras' END
+            SET is_placed = 0
             WHERE id = ?
             """,
             (camera_id,),
@@ -262,7 +261,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             camera.notes,
             camera.zone,
             camera.dvr_origin,
-            camera.layer_id or self.default_layer_id(layout_id, "cameras"),
+            self._resolved_layer_id(camera.layer_id, layout_id),
             int(is_placed),
         )
 
@@ -303,3 +302,15 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingSh
             Camera("cam_04", t("seed.cam_04.name"), "192.168.1.103", 554, "PTZ", status=True, rotation=45.0, notes=t("seed.cam_04.notes")),
             Camera("cam_05", t("seed.cam_05.name"), "192.168.1.104", 554, "Dome", status=False, notes=t("seed.cam_05.notes")),
         ]
+
+    def _camera_fallback_layer_id(self, camera_id: str) -> str:
+        row = self.db.fetch_one("SELECT layout_id FROM cameras WHERE id = ?", (camera_id,))
+        if row is None:
+            return ""
+        self.ensure_default_layers(row["layout_id"])
+        return self.first_layer_id(row["layout_id"])
+
+    def _resolved_layer_id(self, layer_id: str, layout_id: str) -> str:
+        if layer_id and any(layer.id == layer_id for layer in self.get_layers(layout_id)):
+            return layer_id
+        return self.first_layer_id(layout_id)

@@ -24,6 +24,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Ready. Drag cameras onto the map to position them.",
         "jp": "準備完了。カメラを地図へドラッグして配置してください。",
     },
+    "button.yes": {
+        "vi": "Có",
+        "en": "Yes",
+        "jp": "はい",
+    },
+    "button.no": {
+        "vi": "Không",
+        "en": "No",
+        "jp": "いいえ",
+    },
     "dock.control_panel": {
         "vi": "Bảng Điều Khiển",
         "en": "Control Panel",
@@ -69,6 +79,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Settings",
         "jp": "設定",
     },
+    "action.import_package": {
+        "vi": "Nhập sơ đồ...",
+        "en": "Import diagram...",
+        "jp": "図面をインポート...",
+    },
+    "action.export_package": {
+        "vi": "Xuất sơ đồ...",
+        "en": "Export diagram...",
+        "jp": "図面をエクスポート...",
+    },
     "action.zoom_in": {
         "vi": "Phóng to",
         "en": "Zoom in",
@@ -88,6 +108,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "vi": "Chọn",
         "en": "Select",
         "jp": "選択",
+    },
+    "action.pan": {
+        "vi": "Di chuyển bản đồ",
+        "en": "Pan map",
+        "jp": "地図をパン",
     },
     "action.draw_line": {
         "vi": "Vẽ đường",
@@ -264,6 +289,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Select",
         "jp": "選択",
     },
+    "layer.expand": {
+        "vi": "Mở layer",
+        "en": "Expand layer",
+        "jp": "レイヤーを展開",
+    },
+    "layer.collapse": {
+        "vi": "Thu gọn layer",
+        "en": "Collapse layer",
+        "jp": "レイヤーを折りたたむ",
+    },
     "layer.delete": {
         "vi": "Xóa",
         "en": "Delete",
@@ -344,6 +379,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Save camera CSV",
         "jp": "カメラCSVを保存",
     },
+    "dialog.choose_package.title": {
+        "vi": "Chọn file sơ đồ",
+        "en": "Choose diagram package",
+        "jp": "図面パッケージを選択",
+    },
+    "dialog.save_package.title": {
+        "vi": "Lưu file sơ đồ",
+        "en": "Save diagram package",
+        "jp": "図面パッケージを保存",
+    },
+    "dialog.package.filter": {
+        "vi": "Camera Map (*.cmvmap)",
+        "en": "Camera Map (*.cmvmap)",
+        "jp": "Camera Map (*.cmvmap)",
+    },
     "settings.title": {
         "vi": "Cài đặt",
         "en": "Settings",
@@ -403,6 +453,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "vi": "Light theme",
         "en": "Light theme",
         "jp": "ライトテーマ",
+    },
+    "settings.theme": {
+        "vi": "Giao diện",
+        "en": "Theme",
+        "jp": "テーマ",
+    },
+    "settings.theme_dark": {
+        "vi": "Tối",
+        "en": "Dark",
+        "jp": "ダーク",
+    },
+    "settings.theme_light": {
+        "vi": "Sáng",
+        "en": "Light",
+        "jp": "ライト",
     },
     "dialog.add_text.title": {
         "vi": "Thêm chữ",
@@ -464,6 +529,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "The selected image could not be loaded or is not a valid image file.",
         "jp": "選択した画像を読み込めないか、画像ファイルが無効です。",
     },
+    "error.package.title": {
+        "vi": "Lỗi file sơ đồ",
+        "en": "Diagram package error",
+        "jp": "図面パッケージエラー",
+    },
+    "error.package.body": {
+        "vi": "Không thể nhập hoặc xuất file sơ đồ đã chọn.",
+        "en": "Could not import or export the selected diagram package.",
+        "jp": "選択した図面パッケージをインポートまたはエクスポートできません。",
+    },
     "status.map_loaded": {
         "vi": "Đã tải bản đồ: {filename}",
         "en": "Loaded map: {filename}",
@@ -473,6 +548,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "vi": "Đã gỡ bản đồ nền.",
         "en": "Unloaded background map.",
         "jp": "背景マップを解除しました。",
+    },
+    "status.package_exported": {
+        "vi": "Đã xuất file sơ đồ.",
+        "en": "Exported diagram package.",
+        "jp": "図面パッケージをエクスポートしました。",
+    },
+    "status.package_imported": {
+        "vi": "Đã nhập file sơ đồ.",
+        "en": "Imported diagram package.",
+        "jp": "図面パッケージをインポートしました。",
     },
     "camera_panel.title": {
         "vi": "Danh sách Camera Chưa Đặt",

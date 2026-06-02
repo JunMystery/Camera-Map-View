@@ -6,7 +6,6 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtWidgets import QGraphicsItem
 
 from models.drawing_shape_model import DrawingShape
-from views.layer_state import DRAWINGS_LAYER, IMAGES_LAYER, TEXT_LAYER
 from views.map_drawing_tools import DrawingMode
 
 
@@ -14,7 +13,7 @@ class MapCanvasDrawingEvents:
     """Handle drawing-mode mouse events and shape layer mapping."""
 
     def _start_drawing(self, event: Any) -> bool:
-        if self.drawing_mode == DrawingMode.SELECT or event.button() != Qt.MouseButton.LeftButton:
+        if self.drawing_mode in {DrawingMode.PAN, DrawingMode.SELECT} or event.button() != Qt.MouseButton.LeftButton:
             return False
         self.drawing_start_pos = self.mapToScene(event.position().toPoint())
         self.freehand_points = [self.drawing_start_pos]
@@ -22,7 +21,7 @@ class MapCanvasDrawingEvents:
         return True
 
     def _update_drawing_preview(self, event: Any) -> bool:
-        if self.drawing_start_pos is None or self.drawing_mode == DrawingMode.SELECT:
+        if self.drawing_start_pos is None or self.drawing_mode in {DrawingMode.PAN, DrawingMode.SELECT}:
             return False
         current_pos = self.mapToScene(event.position().toPoint())
         if self.drawing_mode == DrawingMode.FREEHAND:
@@ -36,7 +35,7 @@ class MapCanvasDrawingEvents:
         return True
 
     def _finish_drawing(self, event: Any) -> bool:
-        if self.drawing_start_pos is None or self.drawing_mode == DrawingMode.SELECT:
+        if self.drawing_start_pos is None or self.drawing_mode in {DrawingMode.PAN, DrawingMode.SELECT}:
             return False
         end_pos = self.mapToScene(event.position().toPoint())
         start_pos = self.drawing_start_pos
@@ -67,10 +66,3 @@ class MapCanvasDrawingEvents:
 
     def _shape_from_points(self, start_pos: QPointF, end_pos: QPointF) -> DrawingShape | None:
         return self.drawing_tool.shape_from_points(self.drawing_mode, start_pos, end_pos, self.drawing_color)
-
-    def _layer_for_shape(self, shape: DrawingShape) -> str:
-        if shape.shape_type == "Image":
-            return IMAGES_LAYER
-        if shape.shape_type == "Text":
-            return TEXT_LAYER
-        return DRAWINGS_LAYER

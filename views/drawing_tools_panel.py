@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QFrame, QMenu, QToolButton, QVBoxLayout, QWidget
 
 from config.i18n import t
 from views.tool_icons import tool_icon
-from views.ui_theme import DARK_BORDER, drawing_tools_stylesheet
+from views.ui_theme import DARK_BORDER, LIGHT_BORDER, LIGHT_TEXT, TEXT_ON_DARK, drawing_tools_stylesheet
 
 
 class DrawingToolsPanel(QWidget):
@@ -28,6 +28,7 @@ class DrawingToolsPanel(QWidget):
         self.view_actions = view_actions
         self._buttons: list[QToolButton] = []
         self._collapsed = False
+        self._icon_color = TEXT_ON_DARK
 
         self.root_layout = QVBoxLayout(self)
         self.root_layout.setContentsMargins(7, 7, 7, 7)
@@ -42,7 +43,8 @@ class DrawingToolsPanel(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(6)
         content_layout.addWidget(self._action_button(mode_actions[0]))
-        content_layout.addWidget(self._menu_button("Draw", mode_actions[1:], "draw_line"))
+        content_layout.addWidget(self._action_button(mode_actions[1]))
+        content_layout.addWidget(self._menu_button("Draw", mode_actions[2:], "draw_line"))
         content_layout.addWidget(self._separator())
         for action in edit_actions:
             content_layout.addWidget(self._action_button(action))
@@ -51,18 +53,21 @@ class DrawingToolsPanel(QWidget):
         content_layout.addWidget(self._menu_button("Info", view_actions[1:], "info"))
         self.root_layout.addWidget(self.content)
 
-        self.setStyleSheet(drawing_tools_stylesheet())
+        self.apply_theme(False)
         self.retranslate()
 
     def retranslate(self) -> None:
         """Refresh panel tooltips after language changes."""
         self.collapse_button.setToolTip(t("dock.drawing_tools"))
         for action in [*self.mode_actions, *self.edit_actions, *self.view_actions]:
-            action.setIcon(tool_icon(action.objectName() or "grid"))
+            action.setIcon(self._icon(action.objectName() or "grid"))
         for button in self._buttons:
             action = button.defaultAction()
             if action is not None:
                 button.setToolTip(action.text())
+            icon_key = button.property("icon_key")
+            if icon_key:
+                button.setIcon(self._icon(str(icon_key)))
 
     def toggle_collapsed(self) -> None:
         """Collapse or expand the floating tool panel."""
@@ -72,14 +77,23 @@ class DrawingToolsPanel(QWidget):
         """Apply the collapsed state."""
         self._collapsed = collapsed
         self.content.setVisible(not collapsed)
-        self.collapse_button.setIcon(tool_icon("expand" if collapsed else "collapse"))
+        self.collapse_button.setProperty("icon_key", "expand" if collapsed else "collapse")
+        self.collapse_button.setIcon(self._icon("expand" if collapsed else "collapse"))
         self.adjustSize()
+
+    def apply_theme(self, light_theme: bool) -> None:
+        """Apply the shared application palette to the panel."""
+        self._separator_color = LIGHT_BORDER if light_theme else DARK_BORDER
+        self._icon_color = LIGHT_TEXT if light_theme else TEXT_ON_DARK
+        self.setStyleSheet(drawing_tools_stylesheet(light_theme))
+        self.retranslate()
 
     def _action_button(self, action: QAction, icon_key: str | None = None) -> QToolButton:
         button = self._base_button(icon_key or action.objectName())
         button.setDefaultAction(action)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        button.setIcon(tool_icon(icon_key or action.objectName()))
+        button.setProperty("icon_key", icon_key or action.objectName())
+        button.setIcon(self._icon(icon_key or action.objectName()))
         button.setToolTip(action.text())
         action.changed.connect(lambda item=action, target=button: self._sync_action_button(item, target))
         return button
@@ -87,12 +101,13 @@ class DrawingToolsPanel(QWidget):
     def _menu_button(self, label: str, actions: list[QAction], icon_key: str) -> QToolButton:
         button = self._base_button(icon_key)
         button.setText(label)
+        button.setProperty("icon_key", icon_key)
         button.setCheckable(True)
         button.setToolTip(label)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(button)
         for action in actions:
-            action.setIcon(tool_icon(action.objectName()))
+            action.setIcon(self._icon(action.objectName()))
             menu.addAction(action)
             action.changed.connect(lambda target=button, items=actions: self._sync_menu_button(target, items))
         button.setMenu(menu)
@@ -102,7 +117,8 @@ class DrawingToolsPanel(QWidget):
     def _base_button(self, icon_key: str) -> QToolButton:
         button = QToolButton(self)
         button.setAutoRaise(False)
-        button.setIcon(tool_icon(icon_key))
+        button.setProperty("icon_key", icon_key)
+        button.setIcon(self._icon(icon_key))
         button.setIconSize(QSize(24, 24))
         button.setFixedSize(40, 38)
         self._buttons.append(button)
@@ -112,16 +128,20 @@ class DrawingToolsPanel(QWidget):
         line = QFrame(self)
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Plain)
-        line.setStyleSheet(f"color: {DARK_BORDER};")
+        line.setStyleSheet(f"color: {getattr(self, '_separator_color', DARK_BORDER)};")
         return line
 
     def _sync_action_button(self, action: QAction, button: QToolButton) -> None:
-        button.setIcon(tool_icon(action.objectName() or "grid"))
+        button.setIcon(self._icon(action.objectName() or "grid"))
         button.setToolTip(action.text())
 
     def _sync_menu_button(self, button: QToolButton, actions: list[QAction]) -> None:
         checked = next((action for action in actions if action.isChecked()), None)
         button.setChecked(checked is not None)
         if checked is not None:
-            button.setIcon(tool_icon(checked.objectName()))
+            button.setProperty("icon_key", checked.objectName())
+            button.setIcon(self._icon(checked.objectName()))
             button.setToolTip(checked.text())
+
+    def _icon(self, icon_key: str | None):
+        return tool_icon(icon_key or "grid", color=self._icon_color)

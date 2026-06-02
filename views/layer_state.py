@@ -5,12 +5,6 @@ from dataclasses import dataclass
 
 BACKGROUND_LAYER = "background"
 GRID_LAYER = "grid"
-CAMERAS_LAYER = "cameras"
-DRAWINGS_LAYER = "drawings"
-IMAGES_LAYER = "images"
-TEXT_LAYER = "text"
-ANNOTATION_LAYERS = [DRAWINGS_LAYER, IMAGES_LAYER, TEXT_LAYER]
-ALL_LAYERS = [BACKGROUND_LAYER, GRID_LAYER, CAMERAS_LAYER, *ANNOTATION_LAYERS]
 
 
 @dataclass

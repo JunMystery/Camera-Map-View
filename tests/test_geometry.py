@@ -2,14 +2,15 @@
 
 from PyQt6.QtCore import QByteArray, QMimeData, QPointF, Qt
 from PyQt6.QtGui import QImage
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QGraphicsView
 
 from models.camera_data_model import Camera
+from models.canvas_layer_model import CanvasLayer
 from models.drawing_shape_model import DrawingShape
 from utils.geometry import snap_to_grid
 from config.i18n import set_language
 from views.camera_view_dialog import CameraPropertiesDialog
-from views.layer_state import BACKGROUND_LAYER, CAMERAS_LAYER, DRAWINGS_LAYER, GRID_LAYER, IMAGES_LAYER, TEXT_LAYER
+from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
 from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
 
@@ -45,6 +46,57 @@ def test_canvas_creates_rectangle_shape_from_drawing_points() -> None:
     assert shape is not None
     assert shape.shape_type == "Rectangle"
     assert shape.points == [0.0, 0.0, 40.0, 80.0]
+    app.processEvents()
+
+
+def test_canvas_defaults_to_pan_mode() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+
+    assert canvas.drawing_mode == DrawingMode.PAN
+    assert canvas.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
+    app.processEvents()
+
+
+def test_pan_mode_disables_item_interaction_until_select() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    camera_item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    assert not camera_item.flags() & camera_item.GraphicsItemFlag.ItemIsSelectable
+    assert not camera_item.flags() & camera_item.GraphicsItemFlag.ItemIsMovable
+
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+
+    assert camera_item.flags() & camera_item.GraphicsItemFlag.ItemIsSelectable
+    assert camera_item.flags() & camera_item.GraphicsItemFlag.ItemIsMovable
+    app.processEvents()
+
+
+def test_escape_cancels_camera_resize_and_rotation() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10", rotation=20.0))
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    item.setSelected(True)
+
+    item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(46, 0)))
+    assert item.is_rotating
+    assert item.camera.rotation != 20.0
+
+    canvas.keyPressEvent(_KeyEvent(Qt.Key.Key_Escape))
+
+    assert not item.is_rotating
+    assert item.camera.rotation == 20.0
+
+    item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(54, 54), QPointF(100, 100)))
+    item._apply_resize_from_distance(200.0)
+    assert item.scale() != 1.0
+
+    canvas.keyPressEvent(_KeyEvent(Qt.Key.Key_Escape))
+
+    assert not item.is_resizing
+    assert item.scale() == 1.0
     app.processEvents()
 
 
@@ -192,22 +244,23 @@ def test_canvas_layer_visibility_lock_and_selection() -> None:
     camera_item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
     drawing_item = canvas.add_drawing_shape(DrawingShape("shape_test", "Line", [0.0, 0.0, 40.0, 40.0]))
     assert drawing_item is not None
+    layer_id = canvas.active_layer_id
 
     canvas.set_layer_visible(GRID_LAYER, False)
-    canvas.set_layer_visible(CAMERAS_LAYER, False)
-    canvas.set_layer_visible(DRAWINGS_LAYER, False)
+    canvas.set_layer_visible(layer_id, False)
 
     assert all(not item.isVisible() for item in canvas.grid_items)
     assert not camera_item.isVisible()
     assert not drawing_item.isVisible()
 
-    canvas.set_layer_visible(CAMERAS_LAYER, True)
-    canvas.set_layer_locked(CAMERAS_LAYER, True)
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    canvas.set_layer_visible(layer_id, True)
+    canvas.set_layer_locked(layer_id, True)
     assert not camera_item.flags() & camera_item.GraphicsItemFlag.ItemIsMovable
-    assert canvas.select_layer_items(CAMERAS_LAYER) == 0
+    assert canvas.select_layer_items(layer_id) == 0
 
-    canvas.set_layer_locked(CAMERAS_LAYER, False)
-    assert canvas.select_layer_items(CAMERAS_LAYER) == 1
+    canvas.set_layer_locked(layer_id, False)
+    assert canvas.select_layer_items(layer_id) == 2
     assert camera_item.isSelected()
     app.processEvents()
 
@@ -217,22 +270,18 @@ def test_canvas_delete_layer_items_emits_persistence_signal(tmp_path) -> None:
     canvas = MapCanvas()
     deleted = []
     canvas.drawing_deleted.connect(deleted.append)
-    assert canvas.set_active_layer(TEXT_LAYER)
+    layer_id = canvas.active_layer_id
     text_item = canvas.add_drawing_shape(DrawingShape("text_test", "Text", [1.0, 2.0], label="Hello"))
     image_path = tmp_path / "layer.png"
     image = QImage(32, 32, QImage.Format.Format_ARGB32)
     image.fill(0xFFFFFFFF)
     assert image.save(str(image_path))
-    assert canvas.set_active_layer(IMAGES_LAYER)
     image_item = canvas.add_drawing_shape(DrawingShape("image_test", "Image", [1.0, 2.0, 32.0, 32.0], image_path=str(image_path)))
 
     assert text_item is not None
     assert image_item is not None
-    assert canvas.delete_layer_items(TEXT_LAYER) == 1
-    assert deleted == ["text_test"]
-
-    assert canvas.delete_layer_items(IMAGES_LAYER) == 1
-    assert deleted == ["text_test", "image_test"]
+    assert canvas.delete_layer_items(layer_id) == 2
+    assert set(deleted) == {"text_test", "image_test"}
     app.processEvents()
 
 
@@ -246,7 +295,9 @@ def test_canvas_layer_background_delete_and_annotation_reorder(tmp_path) -> None
     assert canvas.load_background_image(str(image_path))
 
     drawing_item = canvas.add_drawing_shape(DrawingShape("shape_test", "Line", [0.0, 0.0, 40.0, 40.0]))
-    assert canvas.set_active_layer(TEXT_LAYER)
+    text_layer = CanvasLayer("layer_default_2", "default", "Layer 2", 1)
+    canvas.set_canvas_layers([*canvas.canvas_layers, text_layer], "default")
+    assert canvas.set_active_layer(text_layer.id)
     text_item = canvas.add_drawing_shape(DrawingShape("text_test", "Text", [1.0, 2.0], label="Hello"))
 
     assert canvas.delete_layer_items(BACKGROUND_LAYER) == 1
@@ -256,7 +307,7 @@ def test_canvas_layer_background_delete_and_annotation_reorder(tmp_path) -> None
 
     assert text_item is not None
     before = text_item.zValue()
-    assert canvas.move_layer(TEXT_LAYER, -1)
+    assert canvas.move_layer(text_layer.id, -1)
     assert text_item.zValue() < before
     app.processEvents()
 
@@ -264,13 +315,16 @@ def test_canvas_layer_background_delete_and_annotation_reorder(tmp_path) -> None
 def test_canvas_draws_new_items_into_active_layer() -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
-    assert canvas.set_active_layer(TEXT_LAYER)
+    target_layer = CanvasLayer("layer_default_2", "default", "Layer 2", 1)
+    canvas.set_canvas_layers([*canvas.canvas_layers, target_layer], "default")
+    assert canvas.set_active_layer(target_layer.id)
 
     item = canvas.add_drawing_shape(DrawingShape("shape_test", "Line", [0.0, 0.0, 40.0, 40.0]))
 
     assert item is not None
-    assert item.data(2) == "layer_default_text"
-    assert canvas.select_layer_items(TEXT_LAYER) == 1
+    assert item.data(2) == target_layer.id
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    assert canvas.select_layer_items(target_layer.id) == 1
     app.processEvents()
 
 
@@ -303,6 +357,7 @@ def test_scene_clamps_drawing_items_to_canvas_bounds() -> None:
     canvas.resize_canvas(100, 100)
     item = canvas.add_drawing_shape(DrawingShape("shape_test", "Rectangle", [0.0, 0.0, 20.0, 20.0]))
     assert item is not None
+    canvas.set_drawing_mode(DrawingMode.SELECT)
     item.setSelected(True)
 
     item.setPos(200, 200)
@@ -324,6 +379,41 @@ class _MouseEvent:
 
     def position(self) -> QPointF:
         return self._position
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class _ItemMouseEvent:
+    def __init__(self, button: Qt.MouseButton, pos: QPointF, scene_pos: QPointF | None = None) -> None:
+        self._button = button
+        self._pos = pos
+        self._scene_pos = scene_pos or pos
+        self.accepted = False
+
+    def button(self) -> Qt.MouseButton:
+        return self._button
+
+    def pos(self) -> QPointF:
+        return self._pos
+
+    def scenePos(self) -> QPointF:
+        return self._scene_pos
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class _KeyEvent:
+    def __init__(self, key: Qt.Key) -> None:
+        self._key = key
+        self.accepted = False
+
+    def key(self) -> Qt.Key:
+        return self._key
+
+    def isAutoRepeat(self) -> bool:
+        return False
 
     def accept(self) -> None:
         self.accepted = True

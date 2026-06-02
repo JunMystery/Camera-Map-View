@@ -10,11 +10,11 @@ from PyQt6.QtWidgets import QGraphicsItem, QMenu, QStyleOptionGraphicsItem, QWid
 
 from config.i18n import t
 from models.camera_data_model import Camera
+from views.map_drawing_tools import DrawingMode
 from views.ui_theme import (
     DANGER,
     DARK_SURFACE_ALT,
     LIGHT_TEXT,
-    PRIMARY,
     SUCCESS,
     TEXT_MUTED,
     TEXT_ON_DARK,
@@ -39,6 +39,7 @@ class CameraItem(QGraphicsItem):
         self.is_resizing = False
         self.resize_start_distance = 1.0
         self.resize_start_scale = 1.0
+        self.rotation_start_value = camera.rotation
         self.min_scale = 0.5
         self.max_scale = 3.0
         self.light_theme = False
@@ -120,8 +121,8 @@ class CameraItem(QGraphicsItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         is_selected = self.isSelected()
-        fov_color = QColor(PRIMARY) if is_selected else QColor(TEXT_MUTED)
-        fov_color.setAlpha(40 if is_selected else 15)
+        fov_color = QColor(DANGER)
+        fov_color.setAlpha(110 if is_selected else 55)
 
         painter.save()
         painter.rotate(self.camera.rotation)
@@ -132,7 +133,7 @@ class CameraItem(QGraphicsItem):
         fov_path.closeSubpath()
         painter.fillPath(fov_path, QBrush(fov_color))
 
-        fov_pen = QPen(fov_color, 1, Qt.PenStyle.DashLine)
+        fov_pen = QPen(fov_color, 2.5 if is_selected else 1.5, Qt.PenStyle.DashLine)
         painter.setPen(fov_pen)
         painter.drawPath(fov_path)
 
@@ -202,6 +203,7 @@ class CameraItem(QGraphicsItem):
             self.camera.position_y = new_pos.y()
             if self.move_callback is not None:
                 self.move_callback(self.camera.id, new_pos.x(), new_pos.y())
+            self._notify_canvas_layers_changed()
         return super().itemChange(change, value)
 
     def _clamp_to_scene(self, point: QPointF) -> QPointF:
@@ -218,6 +220,9 @@ class CameraItem(QGraphicsItem):
 
     def mousePressEvent(self, event: Any) -> None:
         """Start direct rotation or resizing when selected handles are grabbed."""
+        if not self._canvas_allows_handle_edit():
+            super().mousePressEvent(event)
+            return
         if event.button() == Qt.MouseButton.LeftButton and self.isSelected() and self._is_on_resize_handle(event.pos()):
             self.is_resizing = True
             self.resize_start_distance = max(self._scene_distance_from_center(event), 1.0)
@@ -227,6 +232,7 @@ class CameraItem(QGraphicsItem):
             return
         if event.button() == Qt.MouseButton.LeftButton and self.isSelected() and self._is_on_rotation_ring(event.pos()):
             self.is_rotating = True
+            self.rotation_start_value = self.camera.rotation
             self.setCursor(Qt.CursorShape.SizeAllCursor)
             self._apply_rotation_from_point(event.pos())
             event.accept()
@@ -271,6 +277,24 @@ class CameraItem(QGraphicsItem):
         if self.edit_callback is not None:
             self.edit_callback(self.camera.id)
 
+    def cancel_interaction(self) -> bool:
+        """Cancel an in-progress camera handle edit and restore the original value."""
+        if self.is_resizing:
+            self.is_resizing = False
+            self._set_camera_scale(self.resize_start_scale)
+            self.unsetCursor()
+            return True
+        if self.is_rotating:
+            self.is_rotating = False
+            self.camera.rotation = self.rotation_start_value
+            self.update_tooltip()
+            self.update()
+            if self.rotation_callback is not None:
+                self.rotation_callback(self.camera.id, self.camera.rotation)
+            self.unsetCursor()
+            return True
+        return False
+
     def _visible_info_lines(self) -> list[str]:
         lines: list[str] = []
         if self.info_visibility.get("name", True):
@@ -307,6 +331,7 @@ class CameraItem(QGraphicsItem):
         self.setScale(self.camera.display_scale)
         if self.scale_callback is not None:
             self.scale_callback(self.camera.id, self.camera.display_scale)
+        self._notify_canvas_layers_changed()
 
     def _apply_rotation_from_point(self, point: QPointF) -> None:
         angle = math.degrees(math.atan2(point.y(), point.x())) % 360
@@ -315,3 +340,17 @@ class CameraItem(QGraphicsItem):
         self.update()
         if self.rotation_callback is not None:
             self.rotation_callback(self.camera.id, self.camera.rotation)
+        self._notify_canvas_layers_changed()
+
+    def _canvas_allows_handle_edit(self) -> bool:
+        if self.scene() is None or not self.scene().views():
+            return True
+        view = self.scene().views()[0]
+        return getattr(view, "drawing_mode", DrawingMode.SELECT) == DrawingMode.SELECT
+
+    def _notify_canvas_layers_changed(self) -> None:
+        if self.scene() is None or not self.scene().views():
+            return
+        signal = getattr(self.scene().views()[0], "layers_changed", None)
+        if signal is not None:
+            signal.emit()

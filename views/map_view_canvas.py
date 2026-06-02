@@ -7,17 +7,13 @@ from PyQt6.QtGui import QPainter, QPixmap
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsView
 
 from models.camera_data_model import Camera
-from models.canvas_layer_model import CanvasLayer, DEFAULT_LAYER_NAMES
+from models.canvas_layer_model import CanvasLayer
 from models.drawing_shape_model import DrawingShape
 from views.map_canvas_actions import MapCanvasActions
 from views.map_canvas_drawing_events import MapCanvasDrawingEvents
 from views.map_canvas_surface import MapCanvasSurface
 from views.camera_view_item import CameraItem
 from views.ui_theme import DANGER
-from views.layer_state import (
-    CAMERAS_LAYER,
-    DRAWINGS_LAYER,
-)
 from views.map_drawing_tools import DrawingMode, DrawingTool
 
 
@@ -34,6 +30,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     drawing_created = pyqtSignal(object)
     drawing_updated = pyqtSignal(object)
     drawing_deleted = pyqtSignal(str)
+    layers_changed = pyqtSignal()
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -63,7 +60,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.background_source_pixmap: QPixmap | None = None
         self.background_scale = 1.0
         self.light_theme = False
-        self.drawing_mode = DrawingMode.SELECT
+        self.drawing_mode = DrawingMode.PAN
         self.drawing_color = DANGER
         self.drawing_start_pos: QPointF | None = None
         self.freehand_points: list[QPointF] = []
@@ -77,9 +74,12 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.layer_visibility = {layer.id: layer.visible for layer in self.canvas_layers}
         self.layer_locked = {layer.id: layer.locked for layer in self.canvas_layers}
         self.annotation_layer_order = [layer.id for layer in self.canvas_layers]
-        self.active_layer_id = self._default_layer_id("drawings")
+        self.active_layer_id = self._default_layer_id("1")
         self.item_default_flags: dict[QGraphicsItem, QGraphicsItem.GraphicsItemFlag] = {}
+        self.pan_item_flags: dict[QGraphicsItem, QGraphicsItem.GraphicsItemFlag] = {}
+        self.item_interaction_suspended = False
 
+        self.set_drawing_mode(DrawingMode.PAN)
         self.draw_default_grid()
         QTimer.singleShot(0, self.fit_in_view)
 
@@ -96,14 +96,16 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         item.set_snap_callback(self.snap_point)
         item.set_info_visibility(self.camera_info_visibility)
         item.setData(1, "camera")
-        layer_id = camera.layer_id or self._default_layer_id("cameras")
+        layer_id = camera.layer_id or self.active_layer_id or (self.canvas_layers[0].id if self.canvas_layers else self._default_layer_id("1"))
         camera.layer_id = layer_id
         item.setData(2, layer_id)
         item.setVisible(self.layer_visibility.get(layer_id, True))
         self.scene.addItem(item)
         self.camera_items[camera.id] = item
         self._set_item_locked(item, self.layer_locked.get(layer_id, False))
+        self._sync_item_interaction_flags(item)
         self.apply_layer_z_values()
+        self.layers_changed.emit()
         return item
 
     def set_light_theme(self, enabled: bool) -> None:
@@ -132,9 +134,11 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         )
         self.scene.addItem(item)
         self._set_item_locked(item, self.layer_locked.get(item.data(2), False))
+        self._sync_item_interaction_flags(item)
         self.apply_layer_z_values()
         if emit_created:
             self.drawing_created.emit(shape)
+        self.layers_changed.emit()
         return item
 
     def set_canvas_layers(self, layers: list[CanvasLayer], layout_id: str) -> None:
@@ -147,35 +151,32 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.layer_locked = {layer.id: layer.locked for layer in self.canvas_layers}
         self.annotation_layer_order = [layer.id for layer in self.canvas_layers]
         if self.active_layer_id not in self.layer_display_names:
-            self.active_layer_id = self._default_layer_id("drawings")
+            self.active_layer_id = self.canvas_layers[0].id if self.canvas_layers else self._default_layer_id("1")
         self.apply_layer_z_values()
+        self._set_item_interaction_suspended(self.drawing_mode == DrawingMode.PAN)
+        self.layers_changed.emit()
 
     def _default_layer_id(self, kind: str) -> str:
         return f"layer_{self.current_layout_id}_{kind}"
 
     def _fallback_layers(self, layout_id: str) -> list[CanvasLayer]:
-        return [
-            CanvasLayer(f"layer_{layout_id}_{kind}", layout_id, name, position)
-            for position, (kind, name) in enumerate(DEFAULT_LAYER_NAMES.items())
-        ]
-
-    def _shape_layer_kind(self, shape: DrawingShape) -> str:
-        if shape.shape_type == "Image":
-            return "images"
-        if shape.shape_type == "Text":
-            return "text"
-        return "drawings"
+        return [CanvasLayer(f"layer_{layout_id}_1", layout_id, "Layer 1", 0)]
 
     def _target_layer_for_shape(self, shape: DrawingShape) -> str:
-        if self.active_layer_id == self._default_layer_id("cameras"):
-            return self._default_layer_id(self._shape_layer_kind(shape))
-        return self.active_layer_id or self._default_layer_id(self._shape_layer_kind(shape))
+        return self.active_layer_id or (self.canvas_layers[0].id if self.canvas_layers else self._default_layer_id("1"))
 
     def set_drawing_mode(self, mode: DrawingMode | str) -> None:
         """Switch between selection and drawing modes."""
         self.drawing_mode = DrawingMode(mode)
+        if self.drawing_mode == DrawingMode.PAN:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.scene.clearSelection()
+            self._set_item_interaction_suspended(True)
+            return
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.setCursor(Qt.CursorShape.CrossCursor if self.drawing_mode != DrawingMode.SELECT else Qt.CursorShape.ArrowCursor)
+        self._set_item_interaction_suspended(False)
+        self.setCursor(Qt.CursorShape.ArrowCursor if self.drawing_mode == DrawingMode.SELECT else Qt.CursorShape.CrossCursor)
 
     def refresh_camera_item(self, camera: Camera) -> None:
         """Refresh an existing camera item from updated model data."""
@@ -204,7 +205,10 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         """Remove a camera item from the map."""
         if camera_id in self.camera_items:
             item = self.camera_items.pop(camera_id)
+            self.pan_item_flags.pop(item, None)
+            self.item_default_flags.pop(item, None)
             self.scene.removeItem(item)
+            self.layers_changed.emit()
 
     def dragEnterEvent(self, event: Any) -> None:
         """Accept camera drags."""
@@ -266,19 +270,16 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
             return
 
         is_middle_click = event.button() == Qt.MouseButton.MiddleButton
-        is_space_left_click = (
-            event.button() == Qt.MouseButton.LeftButton
-            and self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
-        )
+        is_pan_left_click = event.button() == Qt.MouseButton.LeftButton and self.drawing_mode == DrawingMode.PAN
+        is_space_left_click = event.button() == Qt.MouseButton.LeftButton and self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
 
-        if is_middle_click or is_space_left_click:
+        if is_middle_click or is_pan_left_click or is_space_left_click:
             self.is_panning = True
+            self.pan_start_pos = event.position()
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-            if is_middle_click:
-                self.pan_start_pos = event.position()
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-                event.accept()
-                return
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
 
         super().mousePressEvent(event)
 
@@ -287,7 +288,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         if self._update_drawing_preview(event):
             return
 
-        if self.is_panning and event.buttons() & Qt.MouseButton.MiddleButton:
+        if self.is_panning and event.buttons() & (Qt.MouseButton.MiddleButton | Qt.MouseButton.LeftButton):
             delta = event.position() - self.pan_start_pos
             self.pan_start_pos = event.position()
 
@@ -307,8 +308,12 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
         if self.is_panning:
             self.is_panning = False
-            self.setDragMode(QGraphicsView.DragMode.NoDrag)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            if self.drawing_mode == DrawingMode.PAN:
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            else:
+                self.setDragMode(QGraphicsView.DragMode.NoDrag)
+                self.setCursor(Qt.CursorShape.ArrowCursor)
             event.accept()
             return
 
@@ -316,6 +321,10 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def keyPressEvent(self, event: Any) -> None:
         """Enable left-button panning while Space is held."""
+        if event.key() == Qt.Key.Key_Escape:
+            self._cancel_interaction()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -326,9 +335,57 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     def keyReleaseEvent(self, event: Any) -> None:
         """Disable Space-based panning."""
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
-            self.setDragMode(QGraphicsView.DragMode.NoDrag)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            if self.drawing_mode == DrawingMode.PAN:
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            else:
+                self.setDragMode(QGraphicsView.DragMode.NoDrag)
+                self.setCursor(Qt.CursorShape.ArrowCursor)
             event.accept()
         else:
             super().keyReleaseEvent(event)
+
+    def _set_item_interaction_suspended(self, suspended: bool) -> None:
+        self.item_interaction_suspended = suspended
+        blocked_flags = (
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
+        )
+        for item in self.scene.items():
+            if item.data(1) not in {"camera", "drawing"}:
+                continue
+            if suspended:
+                self.pan_item_flags.setdefault(item, item.flags())
+                item.setSelected(False)
+                item.setFlags(item.flags() & ~blocked_flags)
+            else:
+                original_flags = self.pan_item_flags.pop(item, None)
+                if original_flags is not None:
+                    item.setFlags(original_flags)
+                self._set_item_locked(item, self.layer_locked.get(str(item.data(2) or ""), False))
+
+    def _sync_item_interaction_flags(self, item: QGraphicsItem) -> None:
+        if self.item_interaction_suspended:
+            blocked_flags = (
+                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                | QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
+            )
+            self.pan_item_flags.setdefault(item, item.flags())
+            item.setFlags(item.flags() & ~blocked_flags)
+
+    def _cancel_interaction(self) -> None:
+        self.is_panning = False
+        self._remove_preview_item()
+        self.drawing_start_pos = None
+        self.freehand_points = []
+        for item in self.camera_items.values():
+            item.cancel_interaction()
+        if self.drawing_mode == DrawingMode.PAN:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setCursor(Qt.CursorShape.ArrowCursor if self.drawing_mode == DrawingMode.SELECT else Qt.CursorShape.CrossCursor)
 from views.bounded_graphics_scene import BoundedGraphicsScene

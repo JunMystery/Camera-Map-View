@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -21,9 +20,10 @@ from PyQt6.QtWidgets import (
 
 from config.i18n import t
 from controllers.camera_data_manager import CameraDataManager
+from views import confirm_dialog
 from views.map_view_canvas import MapCanvas
 from views.tool_icons import tool_icon
-from views.ui_theme import DARK_ACTIVE_ROW, layers_panel_stylesheet
+from views.ui_theme import DARK_ACTIVE_ROW, LIGHT_ACTIVE_ROW, LIGHT_TEXT, TEXT_ON_DARK, layers_panel_stylesheet
 
 ROLE_TYPE = Qt.ItemDataRole.UserRole
 ROLE_ID = Qt.ItemDataRole.UserRole + 1
@@ -47,24 +47,37 @@ class LayersPanel(QWidget):
         self.layout_id_callback = layout_id_callback
         self.status_callback = status_callback
         self._refreshing = False
+        self._expanded_layer_ids: set[str] = set()
+        self._seen_layer_ids: set[str] = set()
+        self._layer_toggle_buttons: dict[str, QToolButton] = {}
+        self._icon_color = TEXT_ON_DARK
+        self._active_row_color = DARK_ACTIVE_ROW
         self._build_ui()
+        self.canvas.layers_changed.connect(self.refresh)
         self.refresh()
 
     def refresh(self) -> None:
         """Rebuild layer and object rows from canvas state."""
+        if self._seen_layer_ids:
+            self._expanded_layer_ids = self._current_expanded_layer_ids()
         self._refreshing = True
         self.tree.clear()
+        self._layer_toggle_buttons.clear()
+        visible_layer_ids: set[str] = set()
         for state in reversed(self.canvas.get_layer_states()):
+            visible_layer_ids.add(state.layer_id)
             layer_item = QTreeWidgetItem(["", state.display_name, str(state.item_count)])
             layer_item.setData(0, ROLE_TYPE, "layer")
             layer_item.setData(0, ROLE_LAYER_ID, state.layer_id)
             layer_item.setFlags(layer_item.flags() | Qt.ItemFlag.ItemIsEditable)
-            layer_item.setSelected(state.active)
             if state.active:
                 for column in range(3):
-                    layer_item.setBackground(column, QBrush(QColor(DARK_ACTIVE_ROW)))
+                    layer_item.setBackground(column, QBrush(QColor(self._active_row_color)))
             self.tree.addTopLevelItem(layer_item)
-            self.tree.setItemWidget(layer_item, 0, self._layer_checkbox(state.layer_id, state.visible, self._set_layer_visible))
+            if state.active:
+                self.tree.setCurrentItem(layer_item)
+                layer_item.setSelected(True)
+            self.tree.setItemWidget(layer_item, 0, self._layer_controls(layer_item, state.layer_id, state.visible))
             for object_state in self.canvas.get_layer_object_states(state.layer_id):
                 child = QTreeWidgetItem(["", object_state.label, object_state.object_type])
                 child.setData(0, ROLE_TYPE, "object")
@@ -72,7 +85,9 @@ class LayersPanel(QWidget):
                 child.setData(0, ROLE_ID, object_state.object_id)
                 child.setData(1, ROLE_TYPE, object_state.object_type)
                 layer_item.addChild(child)
-            layer_item.setExpanded(True)
+            layer_item.setExpanded(state.layer_id not in self._seen_layer_ids or state.layer_id in self._expanded_layer_ids)
+            self._sync_layer_toggle_icon(layer_item)
+        self._seen_layer_ids = visible_layer_ids
         self._refreshing = False
 
     def retranslate(self) -> None:
@@ -108,8 +123,10 @@ class LayersPanel(QWidget):
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.tree.setColumnWidth(0, 36)
+        self.tree.setColumnWidth(0, 62)
         self.tree.setColumnWidth(2, 56)
+        self.tree.itemExpanded.connect(self._handle_item_expanded)
+        self.tree.itemCollapsed.connect(self._handle_item_collapsed)
         self.tree.itemSelectionChanged.connect(self._handle_selection)
         self.tree.itemClicked.connect(self._handle_click)
         self.tree.itemChanged.connect(self._handle_item_changed)
@@ -132,10 +149,20 @@ class LayersPanel(QWidget):
         for button in [self.add_button, self.delete_button, self.up_button, self.down_button, self.select_button, self.move_button]:
             row.addWidget(button)
         layout.addLayout(row)
-        self.setStyleSheet(layers_panel_stylesheet())
+        self.apply_theme(False)
         self.retranslate()
 
+    def apply_theme(self, light_theme: bool) -> None:
+        """Apply the shared application palette to the panel."""
+        self._icon_color = LIGHT_TEXT if light_theme else TEXT_ON_DARK
+        self._active_row_color = LIGHT_ACTIVE_ROW if light_theme else DARK_ACTIVE_ROW
+        self.setStyleSheet(layers_panel_stylesheet(light_theme))
+        self._refresh_icons()
+        self.refresh()
+
     def _handle_selection(self) -> None:
+        if self._refreshing:
+            return
         item = self.tree.currentItem()
         if item is None:
             return
@@ -181,8 +208,7 @@ class LayersPanel(QWidget):
         if not layer_id:
             return
         if self.canvas.get_layer_object_states(layer_id):
-            result = QMessageBox.question(self, t("layer.delete"), t("layer.delete_confirm"))
-            if result != QMessageBox.StandardButton.Yes:
+            if not confirm_dialog.confirm(self, t("layer.delete"), t("layer.delete_confirm")):
                 return
         self.canvas.delete_layer_items(layer_id)
         self.camera_manager.delete_layer(layer_id)
@@ -236,12 +262,63 @@ class LayersPanel(QWidget):
         if self.status_callback is not None:
             self.status_callback(message, timeout_ms)
 
-    def _layer_checkbox(self, layer_id: str, checked: bool, callback: Callable[[str, bool], None]) -> QCheckBox:
-        checkbox = QCheckBox(self.tree)
+    def _layer_controls(self, item: QTreeWidgetItem, layer_id: str, checked: bool) -> QWidget:
+        controls = QWidget(self.tree)
+        controls.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        layout = QHBoxLayout(controls)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        toggle = QToolButton(controls)
+        toggle.setProperty("icon_name", "collapse" if item.isExpanded() else "expand")
+        toggle.setAutoRaise(True)
+        toggle.setIconSize(QSize(14, 14))
+        toggle.setFixedSize(20, 22)
+        toggle.setToolTip(t("layer.collapse") if item.isExpanded() else t("layer.expand"))
+        toggle.clicked.connect(lambda _checked=False, target=item: self._toggle_layer_item(target))
+        checkbox = QCheckBox(controls)
         checkbox.setChecked(checked)
         checkbox.setToolTip(layer_id)
-        checkbox.stateChanged.connect(lambda state, item=layer_id: callback(item, state == Qt.CheckState.Checked.value))
-        return checkbox
+        checkbox.stateChanged.connect(lambda state, target=layer_id: self._set_layer_visible(target, state == Qt.CheckState.Checked.value))
+        layout.addWidget(toggle)
+        layout.addWidget(checkbox)
+        layout.addStretch(1)
+        self._layer_toggle_buttons[layer_id] = toggle
+        return controls
+
+    def _toggle_layer_item(self, item: QTreeWidgetItem) -> None:
+        item.setExpanded(not item.isExpanded())
+
+    def _handle_item_expanded(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, ROLE_TYPE) != "layer":
+            return
+        layer_id = str(item.data(0, ROLE_LAYER_ID))
+        self._expanded_layer_ids.add(layer_id)
+        self._sync_layer_toggle_icon(item)
+
+    def _handle_item_collapsed(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, ROLE_TYPE) != "layer":
+            return
+        layer_id = str(item.data(0, ROLE_LAYER_ID))
+        self._expanded_layer_ids.discard(layer_id)
+        self._sync_layer_toggle_icon(item)
+
+    def _sync_layer_toggle_icon(self, item: QTreeWidgetItem) -> None:
+        layer_id = str(item.data(0, ROLE_LAYER_ID))
+        button = self._layer_toggle_buttons.get(layer_id)
+        if button is None:
+            return
+        icon_name = "collapse" if item.isExpanded() else "expand"
+        button.setProperty("icon_name", icon_name)
+        button.setIcon(self._icon(icon_name))
+        button.setToolTip(t("layer.collapse") if item.isExpanded() else t("layer.expand"))
+
+    def _current_expanded_layer_ids(self) -> set[str]:
+        expanded: set[str] = set()
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            if item.isExpanded():
+                expanded.add(str(item.data(0, ROLE_LAYER_ID)))
+        return expanded
 
     def _set_layer_visible(self, layer_id: str, visible: bool) -> None:
         if self._refreshing:
@@ -260,13 +337,20 @@ class LayersPanel(QWidget):
     def _tool_button(self, icon_name: str) -> QToolButton:
         button = QToolButton(self)
         button.setAutoRaise(False)
+        button.setProperty("icon_name", icon_name)
         button.setIcon(self._icon(icon_name))
         button.setIconSize(QSize(22, 22))
         button.setFixedSize(32, 30)
         return button
 
     def _icon(self, icon_name: str) -> QIcon:
-        return tool_icon(icon_name)
+        return tool_icon(icon_name, color=self._icon_color)
+
+    def _refresh_icons(self) -> None:
+        for button in self.findChildren(QToolButton):
+            icon_name = button.property("icon_name")
+            if icon_name:
+                button.setIcon(self._icon(str(icon_name)))
 
     def _separator(self) -> QFrame:
         line = QFrame(self)

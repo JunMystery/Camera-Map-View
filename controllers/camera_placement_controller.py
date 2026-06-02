@@ -172,10 +172,4 @@ class CameraPlacementController:
             self.camera_manager.update_drawing_shape_layer(object_id, layer_id)
 
     def _target_layer_for_camera(self) -> str:
-        default_layers = {
-            self.camera_manager.default_layer_id(self.current_layout_id, kind)
-            for kind in ("drawings", "images", "text")
-        }
-        if self.map_canvas.active_layer_id in default_layers:
-            return self.camera_manager.default_layer_id(self.current_layout_id, "cameras")
-        return self.map_canvas.active_layer_id or self.camera_manager.default_layer_id(self.current_layout_id, "cameras")
+        return self.map_canvas.active_layer_id or self.camera_manager.first_layer_id(self.current_layout_id)

@@ -24,6 +24,7 @@ TEXT_DEFAULT_FONT_SIZE = 18
 class DrawingMode(str, Enum):
     """Available canvas interaction modes."""
 
+    PAN = "pan"
     SELECT = "select"
     LINE = "line"
     RECTANGLE = "rectangle"

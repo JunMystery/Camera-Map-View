@@ -29,7 +29,7 @@ class DrawingShapeOperations:
                     shape.line_thickness,
                     shape.label,
                     shape.image_path,
-                    shape.layer_id or self._default_shape_layer_id(layout_id, shape.shape_type),
+                    self._resolved_shape_layer_id(shape.layer_id, layout_id),
                 ),
             )
             return True
@@ -55,7 +55,7 @@ class DrawingShapeOperations:
                 shape.line_thickness,
                 shape.label,
                 shape.image_path,
-                shape.layer_id or self._default_shape_layer_id(layout_id, shape.shape_type),
+                self._resolved_shape_layer_id(shape.layer_id, layout_id),
                 shape.id,
                 layout_id,
             ),
@@ -76,11 +76,12 @@ class DrawingShapeOperations:
         return [self._row_to_drawing_shape(row) for row in rows]
 
     def _default_shape_layer_id(self, layout_id: str, shape_type: str) -> str:
-        if shape_type == "Image":
-            return self.default_layer_id(layout_id, "images")
-        if shape_type == "Text":
-            return self.default_layer_id(layout_id, "text")
-        return self.default_layer_id(layout_id, "drawings")
+        return self.first_layer_id(layout_id)
+
+    def _resolved_shape_layer_id(self, layer_id: str, layout_id: str) -> str:
+        if layer_id and any(layer.id == layer_id for layer in self.get_layers(layout_id)):
+            return layer_id
+        return self.first_layer_id(layout_id)
 
     def _row_to_drawing_shape(self, row: sqlite3.Row) -> DrawingShape:
         return DrawingShape(

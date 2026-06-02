@@ -3,14 +3,6 @@
 from dataclasses import dataclass
 
 
-DEFAULT_LAYER_NAMES = {
-    "cameras": "Cameras",
-    "drawings": "Drawings",
-    "images": "Images",
-    "text": "Text",
-}
-
-
 @dataclass
 class CanvasLayer:
     """Represent a user-manageable layer inside one map layout."""
