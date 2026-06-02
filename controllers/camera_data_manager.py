@@ -1,20 +1,20 @@
 """Camera business logic and CRUD operations."""
 
 import sqlite3
-import json
 from datetime import datetime
 from pathlib import Path
 
 from config.i18n import t
 from models.camera_data_model import Camera
 from models.camera_db_manager import CameraDbManager
-from models.drawing_shape_model import DrawingShape
+from controllers.camera_layer_operations import CameraLayerOperations
 from controllers.camera_layout_operations import CameraLayoutOperations
+from controllers.drawing_shape_operations import DrawingShapeOperations
 from services.camera_csv_service import export_cameras_to_csv, import_cameras_from_csv
 from utils.validators import is_non_empty_text, is_valid_ipv4
 
 
-class CameraDataManager(CameraLayoutOperations):
+class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DrawingShapeOperations):
     """Validate and persist camera records."""
 
     def __init__(self, db_path: str | Path = "assets/data/camera_manager.db") -> None:
@@ -24,16 +24,17 @@ class CameraDataManager(CameraLayoutOperations):
         """Add a new camera when its id and IP address are unique."""
         if not self._is_valid_camera(camera):
             return False
+        self.ensure_default_layers(layout_id)
 
         try:
             self.db.execute(
                 """
                 INSERT INTO cameras (
                     id, layout_id, name, ip_address, port, camera_type,
-                    pos_x, pos_y, rotation, status, last_check, notes,
-                    zone, dvr_origin, is_placed
+                    pos_x, pos_y, rotation, display_scale, status, last_check, notes,
+                    zone, dvr_origin, layer_id, is_placed
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._camera_to_row_params(camera, layout_id, is_placed),
             )
@@ -46,7 +47,10 @@ class CameraDataManager(CameraLayoutOperations):
         cursor = self.db.execute(
             """
             UPDATE cameras
-            SET pos_x = ?, pos_y = ?, is_placed = 1
+            SET pos_x = ?,
+                pos_y = ?,
+                is_placed = 1,
+                layer_id = CASE WHEN COALESCE(layer_id, '') = '' THEN 'layer_' || layout_id || '_cameras' ELSE layer_id END
             WHERE id = ?
             """,
             (x, y, camera_id),
@@ -67,11 +71,13 @@ class CameraDataManager(CameraLayoutOperations):
                     port = ?,
                     camera_type = ?,
                     rotation = ?,
+                    display_scale = ?,
                     status = ?,
                     last_check = ?,
                     notes = ?,
                     zone = ?,
-                    dvr_origin = ?
+                    dvr_origin = ?,
+                    layer_id = ?
                 WHERE id = ?
                 """,
                 (
@@ -80,11 +86,13 @@ class CameraDataManager(CameraLayoutOperations):
                     camera.port,
                     camera.camera_type,
                     camera.rotation,
+                    camera.display_scale,
                     int(camera.status),
                     camera.last_check.isoformat() if camera.last_check else None,
                     camera.notes,
                     camera.zone,
                     camera.dvr_origin,
+                    camera.layer_id,
                     camera.id,
                 ),
             )
@@ -141,15 +149,20 @@ class CameraDataManager(CameraLayoutOperations):
     def get_camera(self, camera_id: str) -> Camera | None:
         """Return one camera by id."""
         row = self.db.fetch_one("SELECT * FROM cameras WHERE id = ?", (camera_id,))
+        if row:
+            self.ensure_default_layers(row["layout_id"])
+            row = self.db.fetch_one("SELECT * FROM cameras WHERE id = ?", (camera_id,))
         return self._row_to_camera(row) if row else None
 
     def get_all_cameras(self, layout_id: str = "default") -> list[Camera]:
         """Return all cameras ordered by name."""
+        self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all("SELECT * FROM cameras WHERE layout_id = ? ORDER BY name", (layout_id,))
         return [self._row_to_camera(row) for row in rows]
 
     def get_unplaced_cameras(self, layout_id: str = "default") -> list[Camera]:
         """Return cameras that should appear in the sidebar."""
+        self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all(
             "SELECT * FROM cameras WHERE layout_id = ? AND is_placed = 0 ORDER BY name",
             (layout_id,),
@@ -158,6 +171,7 @@ class CameraDataManager(CameraLayoutOperations):
 
     def get_placed_cameras(self, layout_id: str = "default") -> list[Camera]:
         """Return cameras that should appear on the map."""
+        self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all(
             "SELECT * FROM cameras WHERE layout_id = ? AND is_placed = 1 ORDER BY name",
             (layout_id,),
@@ -189,36 +203,6 @@ class CameraDataManager(CameraLayoutOperations):
             for row in rows
         ]
 
-    def add_drawing_shape(self, shape: DrawingShape, layout_id: str = "default") -> bool:
-        """Persist a map drawing shape."""
-        try:
-            self.db.execute(
-                """
-                INSERT INTO drawing_shapes (
-                    id, layout_id, shape_type, points, color, line_thickness, label, image_path
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    shape.id,
-                    layout_id,
-                    shape.shape_type,
-                    json.dumps(shape.points),
-                    shape.color,
-                    shape.line_thickness,
-                    shape.label,
-                    shape.image_path,
-                ),
-            )
-            return True
-        except sqlite3.IntegrityError:
-            return False
-
-    def delete_drawing_shape(self, shape_id: str) -> bool:
-        """Delete a persisted drawing shape by id."""
-        cursor = self.db.execute("DELETE FROM drawing_shapes WHERE id = ?", (shape_id,))
-        return cursor.rowcount > 0
-
     def update_camera_rotation(self, camera_id: str, rotation: float) -> bool:
         """Persist a camera viewing direction."""
         cursor = self.db.execute(
@@ -227,17 +211,13 @@ class CameraDataManager(CameraLayoutOperations):
         )
         return cursor.rowcount > 0
 
-    def get_drawing_shapes(self, layout_id: str = "default") -> list[DrawingShape]:
-        """Return persisted drawing shapes for a layout."""
-        rows = self.db.fetch_all(
-            """
-            SELECT * FROM drawing_shapes
-            WHERE layout_id = ?
-            ORDER BY id
-            """,
-            (layout_id,),
+    def update_camera_scale(self, camera_id: str, display_scale: float) -> bool:
+        """Persist a camera marker display scale."""
+        cursor = self.db.execute(
+            "UPDATE cameras SET display_scale = ? WHERE id = ?",
+            (max(0.5, min(display_scale, 3.0)), camera_id),
         )
-        return [self._row_to_drawing_shape(row) for row in rows]
+        return cursor.rowcount > 0
 
     def seed_default_cameras(self, layout_id: str = "default") -> None:
         """Create sample cameras only when the database is empty."""
@@ -263,11 +243,13 @@ class CameraDataManager(CameraLayoutOperations):
             camera.position_x,
             camera.position_y,
             camera.rotation,
+            camera.display_scale,
             int(camera.status),
             camera.last_check.isoformat() if camera.last_check else None,
             camera.notes,
             camera.zone,
             camera.dvr_origin,
+            camera.layer_id or self.default_layer_id(layout_id, "cameras"),
             int(is_placed),
         )
 
@@ -290,23 +272,14 @@ class CameraDataManager(CameraLayoutOperations):
                 "position_x": row["pos_x"],
                 "position_y": row["pos_y"],
                 "rotation": row["rotation"],
+                "display_scale": row["display_scale"] or 1.0,
                 "status": bool(row["status"]),
                 "last_check": row["last_check"],
                 "notes": row["notes"] or "",
                 "zone": row["zone"] or "",
                 "dvr_origin": row["dvr_origin"] or "",
+                "layer_id": row["layer_id"] or "",
             }
-        )
-
-    def _row_to_drawing_shape(self, row: sqlite3.Row) -> DrawingShape:
-        return DrawingShape(
-            id=row["id"],
-            shape_type=row["shape_type"],
-            points=json.loads(row["points"]),
-            color=row["color"],
-            line_thickness=row["line_thickness"],
-            label=row["label"] or "",
-            image_path=row["image_path"] or "",
         )
 
     def _default_cameras(self) -> list[Camera]:

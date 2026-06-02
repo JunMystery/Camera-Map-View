@@ -2,19 +2,18 @@
 
 from typing import Any
 
-from PyQt6.QtCore import QPointF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QPainter, QPixmap
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsView
 
 from models.camera_data_model import Camera
+from models.canvas_layer_model import CanvasLayer, DEFAULT_LAYER_NAMES
 from models.drawing_shape_model import DrawingShape
 from views.map_canvas_actions import MapCanvasActions
 from views.map_canvas_drawing_events import MapCanvasDrawingEvents
 from views.map_canvas_surface import MapCanvasSurface
 from views.camera_view_item import CameraItem
 from views.layer_state import (
-    ALL_LAYERS,
-    ANNOTATION_LAYERS,
     CAMERAS_LAYER,
     DRAWINGS_LAYER,
 )
@@ -28,6 +27,9 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     camera_edit_requested = pyqtSignal(str)
     camera_moved = pyqtSignal(str, float, float)
     camera_rotated = pyqtSignal(str, float)
+    camera_resized = pyqtSignal(str, float)
+    camera_deleted = pyqtSignal(str)
+    object_layer_changed = pyqtSignal(str, str, str)
     drawing_created = pyqtSignal(object)
     drawing_deleted = pyqtSignal(str)
 
@@ -58,6 +60,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.grid_size = 20
         self.background_source_pixmap: QPixmap | None = None
         self.background_scale = 1.0
+        self.light_theme = False
         self.drawing_mode = DrawingMode.SELECT
         self.drawing_color = "#ef4444"
         self.drawing_start_pos: QPointF | None = None
@@ -65,34 +68,48 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.preview_item: QGraphicsItem | None = None
         self.drawing_tool = DrawingTool(self.snap_point)
         self.camera_info_visibility = {"name": True, "zone": False, "ip": False, "dvr": False}
-        self.layer_default_names = {layer_id: layer_id.title() for layer_id in ALL_LAYERS}
+        self.current_layout_id = "default"
+        self.canvas_layers: list[CanvasLayer] = self._fallback_layers(self.current_layout_id)
+        self.layer_default_names = {layer.id: layer.name for layer in self.canvas_layers}
         self.layer_display_names = self.layer_default_names.copy()
-        self.layer_visibility = {layer_id: True for layer_id in ALL_LAYERS}
-        self.layer_locked = {layer_id: False for layer_id in ALL_LAYERS}
-        self.annotation_layer_order = list(ANNOTATION_LAYERS)
-        self.active_layer_id = DRAWINGS_LAYER
+        self.layer_visibility = {layer.id: layer.visible for layer in self.canvas_layers}
+        self.layer_locked = {layer.id: layer.locked for layer in self.canvas_layers}
+        self.annotation_layer_order = [layer.id for layer in self.canvas_layers]
+        self.active_layer_id = self._default_layer_id("drawings")
         self.item_default_flags: dict[QGraphicsItem, QGraphicsItem.GraphicsItemFlag] = {}
 
         self.draw_default_grid()
+        QTimer.singleShot(0, self.fit_in_view)
 
     def add_camera_item(self, camera: Camera) -> CameraItem:
         """Create and add a camera item to the map."""
         self.remove_camera_item(camera.id)
 
         item = CameraItem(camera)
+        item.set_light_theme(self.light_theme)
         item.set_edit_callback(self.camera_edit_requested.emit)
         item.set_move_callback(self.camera_moved.emit)
         item.set_rotation_callback(self.camera_rotated.emit)
+        item.set_scale_callback(self.camera_resized.emit)
         item.set_snap_callback(self.snap_point)
         item.set_info_visibility(self.camera_info_visibility)
         item.setData(1, "camera")
-        item.setData(2, CAMERAS_LAYER)
-        item.setVisible(self.layer_visibility[CAMERAS_LAYER])
+        layer_id = camera.layer_id or self._default_layer_id("cameras")
+        camera.layer_id = layer_id
+        item.setData(2, layer_id)
+        item.setVisible(self.layer_visibility.get(layer_id, True))
         self.scene.addItem(item)
         self.camera_items[camera.id] = item
-        self._set_item_locked(item, self.layer_locked[CAMERAS_LAYER])
+        self._set_item_locked(item, self.layer_locked.get(layer_id, False))
         self.apply_layer_z_values()
         return item
+
+    def set_light_theme(self, enabled: bool) -> None:
+        """Refresh canvas and camera colors for the active theme."""
+        self.light_theme = enabled
+        self.redraw_grid()
+        for item in self.camera_items.values():
+            item.set_light_theme(enabled)
 
     def add_drawing_shape(self, shape: DrawingShape, emit_created: bool = False) -> QGraphicsItem | None:
         """Add a persisted drawing shape to the scene."""
@@ -102,19 +119,55 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
         item.setData(0, shape.id)
         item.setData(1, "drawing")
-        item.setData(2, self.active_layer_id)
-        item.setVisible(self.layer_visibility[item.data(2)])
+        layer_id = shape.layer_id or self._target_layer_for_shape(shape)
+        shape.layer_id = layer_id
+        item.setData(2, layer_id)
+        item.setVisible(self.layer_visibility.get(layer_id, True))
         item.setFlags(
             item.flags()
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
         )
         self.scene.addItem(item)
-        self._set_item_locked(item, self.layer_locked[item.data(2)])
+        self._set_item_locked(item, self.layer_locked.get(item.data(2), False))
         self.apply_layer_z_values()
         if emit_created:
             self.drawing_created.emit(shape)
         return item
+
+    def set_canvas_layers(self, layers: list[CanvasLayer], layout_id: str) -> None:
+        """Load persisted layer definitions for the active layout."""
+        self.current_layout_id = layout_id
+        self.canvas_layers = layers or self._fallback_layers(layout_id)
+        self.layer_default_names = {layer.id: layer.name for layer in self.canvas_layers}
+        self.layer_display_names = {layer.id: layer.name for layer in self.canvas_layers}
+        self.layer_visibility = {layer.id: layer.visible for layer in self.canvas_layers}
+        self.layer_locked = {layer.id: layer.locked for layer in self.canvas_layers}
+        self.annotation_layer_order = [layer.id for layer in self.canvas_layers]
+        if self.active_layer_id not in self.layer_display_names:
+            self.active_layer_id = self._default_layer_id("drawings")
+        self.apply_layer_z_values()
+
+    def _default_layer_id(self, kind: str) -> str:
+        return f"layer_{self.current_layout_id}_{kind}"
+
+    def _fallback_layers(self, layout_id: str) -> list[CanvasLayer]:
+        return [
+            CanvasLayer(f"layer_{layout_id}_{kind}", layout_id, name, position)
+            for position, (kind, name) in enumerate(DEFAULT_LAYER_NAMES.items())
+        ]
+
+    def _shape_layer_kind(self, shape: DrawingShape) -> str:
+        if shape.shape_type == "Image":
+            return "images"
+        if shape.shape_type == "Text":
+            return "text"
+        return "drawings"
+
+    def _target_layer_for_shape(self, shape: DrawingShape) -> str:
+        if self.active_layer_id == self._default_layer_id("cameras"):
+            return self._default_layer_id(self._shape_layer_kind(shape))
+        return self.active_layer_id or self._default_layer_id(self._shape_layer_kind(shape))
 
     def set_drawing_mode(self, mode: DrawingMode | str) -> None:
         """Switch between selection and drawing modes."""
@@ -130,6 +183,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
         item.camera = camera
         item.setPos(camera.position_x, camera.position_y)
+        item.setScale(camera.display_scale)
         item.update_tooltip()
         item.update()
 

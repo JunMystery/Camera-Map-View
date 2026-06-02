@@ -60,7 +60,7 @@ class MapCanvasSurface:
             scaled = pixmap.scaled(int(pixmap.width() * self.background_scale), int(pixmap.height() * self.background_scale))
             self.background_item = QGraphicsPixmapItem(scaled)
             self.background_item.setData(2, BACKGROUND_LAYER)
-            self.background_item.setVisible(self.layer_visibility[BACKGROUND_LAYER])
+            self.background_item.setVisible(self.layer_visibility.get(BACKGROUND_LAYER, True))
             self.scene.addItem(self.background_item)
             self.scene.setSceneRect(0, 0, scaled.width(), scaled.height())
             self.redraw_grid()
@@ -71,7 +71,8 @@ class MapCanvasSurface:
             return False
 
     def _add_grid_items(self, width: int, height: int, grid_size: int) -> None:
-        pen = QPen(QColor("#2d2d34"), 1, Qt.PenStyle.DotLine)
+        grid_color = QColor("#475569") if self.light_theme else QColor("#94a3b8")
+        pen = QPen(grid_color, 1, Qt.PenStyle.DotLine)
         for x in range(0, width, grid_size):
             self.grid_items.append(self.scene.addLine(x, 0, x, height, pen))
         for y in range(0, height, grid_size):

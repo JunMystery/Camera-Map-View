@@ -84,20 +84,23 @@ class CameraPanel(QWidget):
     def refresh_list(self) -> None:
         """Rebuild tree groups from search and placement filters."""
         query = self.search_input.text().strip().lower()
+        expanded_groups = self._expanded_group_keys()
         self.tree_widget.clear()
         groups: dict[str, list[Camera]] = {}
         for camera in self.cameras.values():
             if (camera.id in self.placed_ids) != self.show_placed or not self._matches(camera, query):
                 continue
-            groups.setdefault(camera.dvr_origin or t("camera_panel.no_dvr"), []).append(camera)
+            group_key = camera.dvr_origin or t("camera_panel.no_dvr")
+            groups.setdefault(group_key, []).append(camera)
         for dvr_name, cameras in sorted(groups.items()):
             group_item = QTreeWidgetItem([f"{dvr_name} ({len(cameras)})"])
+            group_item.setData(0, Qt.ItemDataRole.UserRole, dvr_name)
             self.tree_widget.addTopLevelItem(group_item)
             for camera in sorted(cameras, key=lambda item: item.name):
                 child = QTreeWidgetItem([self._camera_item_text(camera)])
                 child.setData(0, Qt.ItemDataRole.UserRole, camera.id)
                 group_item.addChild(child)
-            group_item.setExpanded(False)
+            group_item.setExpanded(dvr_name in expanded_groups)
 
     def retranslate(self) -> None:
         """Refresh visible text for the active language."""
@@ -165,3 +168,11 @@ class CameraPanel(QWidget):
 
     def _camera_item_text(self, camera: Camera) -> str:
         return t("camera_panel.item", name=camera.name, ip_address=camera.ip_address)
+
+    def _expanded_group_keys(self) -> set[str]:
+        groups: set[str] = set()
+        for index in range(self.tree_widget.topLevelItemCount()):
+            item = self.tree_widget.topLevelItem(index)
+            if item.isExpanded():
+                groups.add(str(item.data(0, Qt.ItemDataRole.UserRole)))
+        return groups

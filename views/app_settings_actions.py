@@ -25,7 +25,9 @@ class AppSettingsActions:
 
     def apply_theme(self) -> None:
         """Apply the current application theme."""
-        if self.settings["light_theme"]:
+        light_theme = bool(self.settings["light_theme"])
+        self.map_canvas.set_light_theme(light_theme)
+        if light_theme:
             self.setStyleSheet("QWidget { background: #f8fafc; color: #111827; }")
         else:
             self.setStyleSheet("")

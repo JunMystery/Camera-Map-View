@@ -162,6 +162,30 @@ def test_camera_item_rotation_ring_updates_angle() -> None:
     app.processEvents()
 
 
+def test_camera_item_resize_handle_updates_scale() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    item.setSelected(True)
+    assert item._is_on_resize_handle(QPointF(54, 54))
+
+    item.resize_start_distance = 50.0
+    item.resize_start_scale = 1.0
+    item._apply_resize_from_distance(100.0)
+
+    assert item.scale() == 2.0
+    assert item.camera.display_scale == 2.0
+
+    item._set_camera_scale(0.1)
+    assert item.scale() == item.min_scale
+    assert item.camera.display_scale == item.min_scale
+
+    item._set_camera_scale(10.0)
+    assert item.scale() == item.max_scale
+    app.processEvents()
+
+
 def test_canvas_layer_visibility_lock_and_selection() -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
@@ -245,7 +269,7 @@ def test_canvas_draws_new_items_into_active_layer() -> None:
     item = canvas.add_drawing_shape(DrawingShape("shape_test", "Line", [0.0, 0.0, 40.0, 40.0]))
 
     assert item is not None
-    assert item.data(2) == TEXT_LAYER
+    assert item.data(2) == "layer_default_text"
     assert canvas.select_layer_items(TEXT_LAYER) == 1
     app.processEvents()
 

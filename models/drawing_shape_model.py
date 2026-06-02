@@ -14,3 +14,4 @@ class DrawingShape:
     line_thickness: int = 2
     label: str = ""
     image_path: str = ""
+    layer_id: str = ""

@@ -55,12 +55,26 @@ class CameraDbManager:
                 pos_x REAL DEFAULT 0.0,
                 pos_y REAL DEFAULT 0.0,
                 rotation REAL DEFAULT 0.0,
+                display_scale REAL DEFAULT 1.0,
                 status INTEGER DEFAULT 0,
                 last_check TEXT,
                 notes TEXT DEFAULT '',
                 zone TEXT DEFAULT '',
                 dvr_origin TEXT DEFAULT '',
+                layer_id TEXT DEFAULT '',
                 is_placed INTEGER DEFAULT 0,
+                FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS canvas_layers (
+                id TEXT PRIMARY KEY,
+                layout_id TEXT NOT NULL DEFAULT 'default',
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                visible INTEGER DEFAULT 1,
+                locked INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
             );
 
@@ -73,6 +87,7 @@ class CameraDbManager:
                 line_thickness INTEGER DEFAULT 2,
                 label TEXT DEFAULT '',
                 image_path TEXT DEFAULT '',
+                layer_id TEXT DEFAULT '',
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
             );
 
@@ -91,6 +106,8 @@ class CameraDbManager:
                 ON cameras(layout_id, ip_address);
             CREATE INDEX IF NOT EXISTS idx_drawing_shapes_layout
                 ON drawing_shapes(layout_id);
+            CREATE INDEX IF NOT EXISTS idx_canvas_layers_layout_position
+                ON canvas_layers(layout_id, position);
             CREATE INDEX IF NOT EXISTS idx_ping_history_camera_time
                 ON ping_history(camera_id, timestamp);
             """
@@ -102,8 +119,16 @@ class CameraDbManager:
             """,
             ("default", "Default Layout", ""),
         )
-        self._add_missing_columns("cameras", {"zone": "TEXT DEFAULT ''", "dvr_origin": "TEXT DEFAULT ''"})
-        self._add_missing_columns("drawing_shapes", {"image_path": "TEXT DEFAULT ''"})
+        self._add_missing_columns(
+            "cameras",
+            {
+                "zone": "TEXT DEFAULT ''",
+                "dvr_origin": "TEXT DEFAULT ''",
+                "display_scale": "REAL DEFAULT 1.0",
+                "layer_id": "TEXT DEFAULT ''",
+            },
+        )
+        self._add_missing_columns("drawing_shapes", {"image_path": "TEXT DEFAULT ''", "layer_id": "TEXT DEFAULT ''"})
         self._add_missing_columns(
             "map_layouts",
             {

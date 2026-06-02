@@ -23,3 +23,15 @@ class LayerState:
     locked: bool
     item_count: int
     active: bool = False
+
+
+@dataclass
+class LayerObjectState:
+    """Represent one canvas object nested under a layer row."""
+
+    object_id: str
+    layer_id: str
+    label: str
+    object_type: str
+    visible: bool
+    locked: bool

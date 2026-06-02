@@ -5,11 +5,9 @@ from typing import Any
 from utils.geometry import snap_to_grid
 from views.camera_view_item import CameraItem
 from views.layer_state import (
-    ALL_LAYERS,
-    ANNOTATION_LAYERS,
     BACKGROUND_LAYER,
-    CAMERAS_LAYER,
     GRID_LAYER,
+    LayerObjectState,
     LayerState,
 )
 
@@ -122,25 +120,51 @@ class MapCanvasActions:
         """Return the current grouped layer states for UI panels."""
         return [
             LayerState(
-                layer_id=layer_id,
-                display_name=self.layer_display_names[layer_id],
-                visible=self.layer_visibility[layer_id],
-                locked=self.layer_locked[layer_id],
-                item_count=len(self._items_for_layer(layer_id)),
-                active=layer_id == self.active_layer_id,
+                layer_id=layer.id,
+                display_name=self.layer_display_names.get(layer.id, layer.name),
+                visible=self.layer_visibility.get(layer.id, layer.visible),
+                locked=self.layer_locked.get(layer.id, layer.locked),
+                item_count=len(self._items_for_layer(layer.id)),
+                active=layer.id == self.active_layer_id,
             )
-            for layer_id in ALL_LAYERS
+            for layer in self.canvas_layers
         ]
+
+    def get_layer_object_states(self, layer_id: str) -> list[LayerObjectState]:
+        """Return object rows for one layer."""
+        rows: list[LayerObjectState] = []
+        for item in self._items_for_layer(layer_id):
+            object_type = str(item.data(1) or "")
+            object_id = str(item.data(0) or "")
+            label = object_id
+            if object_type == "camera" and isinstance(item, CameraItem):
+                object_id = item.camera.id
+                label = item.camera.name
+            elif object_type == "drawing":
+                label = self._drawing_label(item)
+            rows.append(
+                LayerObjectState(
+                    object_id=object_id,
+                    layer_id=layer_id,
+                    label=label,
+                    object_type=object_type,
+                    visible=item.isVisible(),
+                    locked=self.layer_locked.get(layer_id, False),
+                )
+            )
+        return rows
 
     def set_active_layer(self, layer_id: str) -> bool:
         """Select the layer that receives new canvas annotations."""
-        if layer_id not in ANNOTATION_LAYERS:
+        layer_id = self._resolve_layer_id(layer_id)
+        if layer_id not in self.layer_display_names:
             return False
         self.active_layer_id = layer_id
         return True
 
     def set_layer_visible(self, layer_id: str, visible: bool) -> None:
         """Show or hide every item in a layer."""
+        layer_id = self._resolve_layer_id(layer_id)
         self.layer_visibility[layer_id] = visible
         if layer_id == GRID_LAYER:
             self.grid_visible = visible
@@ -149,14 +173,16 @@ class MapCanvasActions:
 
     def set_layer_locked(self, layer_id: str, locked: bool) -> None:
         """Enable or disable selection and movement for a layer."""
+        layer_id = self._resolve_layer_id(layer_id)
         self.layer_locked[layer_id] = locked
         for item in self._items_for_layer(layer_id):
             self._set_item_locked(item, locked)
 
     def select_layer_items(self, layer_id: str) -> int:
         """Select all visible, unlocked items in a layer."""
+        layer_id = self._resolve_layer_id(layer_id)
         self.scene.clearSelection()
-        if self.layer_locked[layer_id]:
+        if self.layer_locked.get(layer_id, False):
             return 0
         selected = 0
         for item in self._items_for_layer(layer_id):
@@ -167,6 +193,7 @@ class MapCanvasActions:
 
     def delete_layer_items(self, layer_id: str) -> int:
         """Delete supported layer contents and emit persistence signals."""
+        layer_id = self._resolve_layer_id(layer_id)
         if layer_id == BACKGROUND_LAYER:
             had_background = self.background_item is not None
             self.unload_background_image()
@@ -175,34 +202,39 @@ class MapCanvasActions:
             deleted = len(self.grid_items)
             self.remove_grid_items()
             return deleted
-        if layer_id == CAMERAS_LAYER:
-            self.scene.clearSelection()
-            return 0
 
         deleted = 0
         for item in list(self._items_for_layer(layer_id)):
-            shape_id = item.data(0)
+            object_type = item.data(1)
+            object_id = item.data(0)
             self.scene.removeItem(item)
-            if shape_id:
-                self.drawing_deleted.emit(str(shape_id))
+            if object_type == "camera" and isinstance(item, CameraItem):
+                self.camera_items.pop(item.camera.id, None)
+                self.camera_deleted.emit(item.camera.id)
+            elif object_id:
+                self.drawing_deleted.emit(str(object_id))
             deleted += 1
         return deleted
 
     def rename_layer(self, layer_id: str, display_name: str) -> None:
         """Rename a layer for the current application session."""
+        layer_id = self._resolve_layer_id(layer_id)
         if display_name.strip():
             self.layer_display_names[layer_id] = display_name.strip()
 
     def set_default_layer_names(self, names: dict[str, str]) -> None:
         """Update translated default names without overwriting custom names."""
         for layer_id, name in names.items():
+            if layer_id not in self.layer_display_names:
+                continue
             if self.layer_display_names[layer_id] == self.layer_default_names[layer_id]:
                 self.layer_display_names[layer_id] = name
             self.layer_default_names[layer_id] = name
 
     def move_layer(self, layer_id: str, direction: int) -> bool:
         """Move an annotation layer up or down within the annotation stack."""
-        if layer_id not in ANNOTATION_LAYERS or direction == 0:
+        layer_id = self._resolve_layer_id(layer_id)
+        if layer_id not in self.annotation_layer_order or direction == 0:
             return False
         current_index = self.annotation_layer_order.index(layer_id)
         new_index = current_index - 1 if direction < 0 else current_index + 1
@@ -224,17 +256,58 @@ class MapCanvasActions:
         for index, layer_id in enumerate(self.annotation_layer_order):
             for item in self._items_for_layer(layer_id):
                 item.setZValue(index * 10)
-        for item in self._items_for_layer(CAMERAS_LAYER):
-            item.setZValue(50)
+
+    def move_selected_items_to_layer(self, layer_id: str) -> int:
+        """Move selected cameras and drawings into a target layer."""
+        layer_id = self._resolve_layer_id(layer_id)
+        if layer_id not in self.layer_display_names:
+            return 0
+        moved = 0
+        for item in self.scene.selectedItems():
+            object_type = item.data(1)
+            object_id = item.data(0)
+            if object_type == "camera" and isinstance(item, CameraItem):
+                item.camera.layer_id = layer_id
+                item.setData(2, layer_id)
+                self.object_layer_changed.emit("camera", item.camera.id, layer_id)
+                moved += 1
+            elif object_type == "drawing" and object_id:
+                item.setData(2, layer_id)
+                self.object_layer_changed.emit("drawing", str(object_id), layer_id)
+                moved += 1
+        self.apply_layer_z_values()
+        return moved
+
+    def select_layer_object(self, object_type: str, object_id: str) -> bool:
+        """Select one canvas object by id."""
+        self.scene.clearSelection()
+        for item in self.scene.items():
+            if object_type == "camera" and isinstance(item, CameraItem) and item.camera.id == object_id:
+                item.setSelected(True)
+                return True
+            if object_type == "drawing" and str(item.data(0) or "") == object_id:
+                item.setSelected(True)
+                return True
+        return False
 
     def _items_for_layer(self, layer_id: str) -> list[Any]:
+        layer_id = self._resolve_layer_id(layer_id)
         if layer_id == BACKGROUND_LAYER:
             return [self.background_item] if self.background_item is not None else []
         if layer_id == GRID_LAYER:
             return list(self.grid_items)
-        if layer_id == CAMERAS_LAYER:
-            return list(self.camera_items.values())
         return [item for item in self.scene.items() if item.data(2) == layer_id]
+
+    def _resolve_layer_id(self, layer_id: str) -> str:
+        if layer_id in self.layer_display_names or layer_id in {BACKGROUND_LAYER, GRID_LAYER}:
+            return layer_id
+        legacy = f"layer_{self.current_layout_id}_{layer_id}"
+        return legacy if legacy in self.layer_display_names else layer_id
+
+    def _drawing_label(self, item: Any) -> str:
+        object_id = str(item.data(0) or "")
+        item_type = item.__class__.__name__.replace("QGraphics", "").replace("Item", "")
+        return f"{item_type} {object_id[-6:]}" if object_id else item_type
 
     def _set_item_locked(self, item: Any, locked: bool) -> None:
         original_flags = self.item_default_flags.setdefault(item, item.flags())

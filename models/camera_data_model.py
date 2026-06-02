@@ -17,11 +17,13 @@ class Camera:
     position_x: float = 0.0
     position_y: float = 0.0
     rotation: float = 0.0
+    display_scale: float = 1.0
     status: bool = False
     last_check: datetime | None = None
     notes: str = ""
     zone: str = ""
     dvr_origin: str = ""
+    layer_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the camera to a serializable dictionary."""

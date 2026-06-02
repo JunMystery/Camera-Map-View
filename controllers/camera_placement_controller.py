@@ -33,6 +33,9 @@ class CameraPlacementController:
         self.map_canvas.camera_edit_requested.connect(self.edit_camera)
         self.map_canvas.camera_moved.connect(self.update_camera_position)
         self.map_canvas.camera_rotated.connect(self.camera_manager.update_camera_rotation)
+        self.map_canvas.camera_resized.connect(self.camera_manager.update_camera_scale)
+        self.map_canvas.camera_deleted.connect(self.delete_camera)
+        self.map_canvas.object_layer_changed.connect(self.update_object_layer)
         self.map_canvas.drawing_created.connect(self.add_drawing_shape)
         self.map_canvas.drawing_deleted.connect(self.camera_manager.delete_drawing_shape)
         self.camera_panel.camera_edit_requested.connect(self.edit_camera)
@@ -44,6 +47,7 @@ class CameraPlacementController:
             self.current_layout_id = layout_id
         self.map_canvas.clear_map_items()
         self.camera_manager.seed_default_cameras(self.current_layout_id)
+        self.map_canvas.set_canvas_layers(self.camera_manager.get_layers(self.current_layout_id), self.current_layout_id)
         placed_cameras = self.camera_manager.get_placed_cameras(self.current_layout_id)
         self.camera_panel.set_cameras(
             self.camera_manager.get_all_cameras(self.current_layout_id),
@@ -66,8 +70,11 @@ class CameraPlacementController:
 
         camera.position_x = x
         camera.position_y = y
+        camera.layer_id = self._target_layer_for_camera()
 
         self.camera_manager.update_camera_position(camera.id, x, y)
+        if camera.layer_id:
+            self.camera_manager.update_camera_layer(camera.id, camera.layer_id)
         self.map_canvas.add_camera_item(camera)
         self._refresh_dashboard()
         self._show_status(
@@ -140,3 +147,19 @@ class CameraPlacementController:
     def add_drawing_shape(self, shape: object) -> bool:
         """Persist drawings into the active layout."""
         return self.camera_manager.add_drawing_shape(shape, self.current_layout_id)
+
+    def update_object_layer(self, object_type: str, object_id: str, layer_id: str) -> None:
+        """Persist a canvas object layer assignment."""
+        if object_type == "camera":
+            self.camera_manager.update_camera_layer(object_id, layer_id)
+        elif object_type == "drawing":
+            self.camera_manager.update_drawing_shape_layer(object_id, layer_id)
+
+    def _target_layer_for_camera(self) -> str:
+        default_layers = {
+            self.camera_manager.default_layer_id(self.current_layout_id, kind)
+            for kind in ("drawings", "images", "text")
+        }
+        if self.map_canvas.active_layer_id in default_layers:
+            return self.camera_manager.default_layer_id(self.current_layout_id, "cameras")
+        return self.map_canvas.active_layer_id or self.camera_manager.default_layer_id(self.current_layout_id, "cameras")

@@ -99,6 +99,7 @@ class CameraPropertiesDialog(QDialog):
             position_x=self.camera.position_x,
             position_y=self.camera.position_y,
             rotation=float(self.rotation_input.value()),
+            display_scale=self.camera.display_scale,
             status=self.status_input.isChecked(),
             last_check=self.camera.last_check,
             notes=self.notes_input.toPlainText().strip(),

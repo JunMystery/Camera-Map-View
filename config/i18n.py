@@ -44,6 +44,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Layouts",
         "jp": "レイアウト",
     },
+    "widgets.panels": {
+        "vi": "Mở bảng điều khiển",
+        "en": "Open panels",
+        "jp": "パネルを開く",
+    },
     "action.open_map": {
         "vi": "Tải bản đồ nền...",
         "en": "Load background map...",
@@ -179,6 +184,31 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Main toolbar",
         "jp": "メインツールバー",
     },
+    "toolbar.context": {
+        "vi": "Thanh công cụ ngữ cảnh",
+        "en": "Context toolbar",
+        "jp": "コンテキストツールバー",
+    },
+    "toolbar.group.map": {
+        "vi": "Bản đồ",
+        "en": "Map",
+        "jp": "マップ",
+    },
+    "toolbar.group.draw": {
+        "vi": "Vẽ",
+        "en": "Draw",
+        "jp": "描画",
+    },
+    "toolbar.group.annotate": {
+        "vi": "Chú thích",
+        "en": "Annotate",
+        "jp": "注釈",
+    },
+    "toolbar.group.view": {
+        "vi": "Hiển thị",
+        "en": "View",
+        "jp": "表示",
+    },
     "layer.background": {
         "vi": "Bản đồ nền",
         "en": "Background",
@@ -229,6 +259,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Name",
         "jp": "名前",
     },
+    "layer.count": {
+        "vi": "Số lượng",
+        "en": "Count",
+        "jp": "数",
+    },
+    "layer.add": {
+        "vi": "Thêm layer",
+        "en": "Add layer",
+        "jp": "レイヤー追加",
+    },
+    "layer.new": {
+        "vi": "Layer",
+        "en": "Layer",
+        "jp": "レイヤー",
+    },
     "layer.select": {
         "vi": "Chọn",
         "en": "Select",
@@ -248,6 +293,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "vi": "Xuống",
         "en": "Down",
         "jp": "下",
+    },
+    "layer.move_selected": {
+        "vi": "Chuyển vào layer",
+        "en": "Move selected",
+        "jp": "選択項目を移動",
+    },
+    "layer.delete_confirm": {
+        "vi": "Layer này có đối tượng. Xóa layer sẽ xóa luôn các đối tượng bên trong. Tiếp tục?",
+        "en": "This layer contains objects. Deleting it will also delete those objects. Continue?",
+        "jp": "このレイヤーにはオブジェクトがあります。削除すると中のオブジェクトも削除されます。続行しますか？",
     },
     "layout.add": {
         "vi": "Thêm",
@@ -658,6 +713,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "vi": "Đã xóa {count} đối tượng trong layer.",
         "en": "Deleted {count} layer item(s).",
         "jp": "レイヤー内の {count} 件を削除しました。",
+    },
+    "status.layer_moved": {
+        "vi": "Đã chuyển {count} đối tượng vào layer.",
+        "en": "Moved {count} item(s) into the layer.",
+        "jp": "{count} 件をレイヤーへ移動しました。",
     },
     "status.layer_camera_delete_blocked": {
         "vi": "Không xóa hàng loạt camera từ layer để tránh mất dữ liệu.",

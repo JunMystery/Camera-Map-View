@@ -49,7 +49,10 @@ def test_drawing_created_signal_persists_shape() -> None:
 
     canvas.drawing_created.emit(shape)
 
-    assert manager.get_drawing_shapes() == [shape]
+    saved = manager.get_drawing_shapes()
+    assert len(saved) == 1
+    assert saved[0].id == shape.id
+    assert saved[0].layer_id == manager.default_layer_id("default", "drawings")
     assert controller.current_layout_id == "default"
     app.processEvents()
 
@@ -89,6 +92,48 @@ def test_canvas_rotates_selected_camera() -> None:
     app.processEvents()
 
 
+def test_canvas_resizes_selected_camera_and_persists_scale() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    controller = CameraPlacementController(panel, canvas, manager)
+    controller.load_cameras()
+    controller.handle_camera_dropped("cam_01", 100.0, 100.0)
+
+    item = canvas.camera_items["cam_01"]
+    item.resize_start_distance = 50.0
+    item.resize_start_scale = 1.0
+    item._apply_resize_from_distance(125.0)
+
+    saved = manager.get_camera("cam_01")
+    assert saved is not None
+    assert saved.display_scale == 2.5
+    assert controller.current_layout_id == "default"
+    app.processEvents()
+
+
+def test_canvas_moves_selected_camera_to_custom_layer() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    controller = CameraPlacementController(panel, canvas, manager)
+    controller.load_cameras()
+    layer = manager.create_layer("Custom", "default")
+    canvas.set_canvas_layers(manager.get_layers("default"), "default")
+    controller.handle_camera_dropped("cam_01", 100.0, 100.0)
+
+    item = canvas.camera_items["cam_01"]
+    item.setSelected(True)
+
+    assert canvas.move_selected_items_to_layer(layer.id) == 1
+    saved = manager.get_camera("cam_01")
+    assert saved is not None
+    assert saved.layer_id == layer.id
+    app.processEvents()
+
+
 def test_canvas_grid_visibility_toggle() -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
@@ -99,6 +144,23 @@ def test_canvas_grid_visibility_toggle() -> None:
 
     canvas.set_grid_visible(True)
     assert all(item.isVisible() for item in canvas.grid_items)
+    app.processEvents()
+
+
+def test_canvas_theme_updates_grid_and_camera_items() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    camera_item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    assert not canvas.light_theme
+    assert not camera_item.light_theme
+    assert canvas.grid_items[0].pen().color().name() == "#94a3b8"
+
+    canvas.set_light_theme(True)
+
+    assert canvas.light_theme
+    assert camera_item.light_theme
+    assert canvas.grid_items[0].pen().color().name() == "#475569"
     app.processEvents()
 
 
@@ -140,11 +202,29 @@ def test_camera_panel_search_toggle_and_dvr_grouping() -> None:
     assert panel.tree_widget.topLevelItemCount() == 1
     assert panel.tree_widget.topLevelItem(0).isExpanded() is False
 
+
+def test_camera_panel_preserves_expanded_group_on_refresh() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    cameras = [
+        Camera("cam_a", "Gate", "10.0.0.10", dvr_origin="DVR-A"),
+        Camera("cam_b", "Lobby", "10.0.0.11", dvr_origin="DVR-A"),
+    ]
+
+    panel.set_cameras(cameras, set())
+    panel.tree_widget.topLevelItem(0).setExpanded(True)
+
+    panel.remove_camera_from_list("cam_a")
+
+    assert panel.tree_widget.topLevelItemCount() == 1
+    assert panel.tree_widget.topLevelItem(0).isExpanded() is True
+    app.processEvents()
+
     panel.search_input.setText("Gate")
-    assert _camera_count(panel) == 1
+    assert _camera_count(panel) == 0
 
     panel.placed_button.click()
-    assert _camera_count(panel) == 0
+    assert _camera_count(panel) == 1
     panel.search_input.setText("")
     assert _camera_count(panel) == 1
     app.processEvents()

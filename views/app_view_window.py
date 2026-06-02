@@ -3,7 +3,7 @@
 import os
 
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QColorDialog, QFileDialog, QInputDialog, QMainWindow, QMessageBox, QStatusBar, QToolBar, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QColorDialog, QFileDialog, QInputDialog, QMainWindow, QMessageBox, QStatusBar, QVBoxLayout, QWidget
 
 from config.i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, get_language, set_language, t
 from controllers.camera_data_manager import CameraDataManager
@@ -14,13 +14,14 @@ from views.app_camera_actions import AppCameraActions
 from views.app_docks import AppDocks
 from views.app_layout_actions import AppLayoutActions
 from views.app_settings_actions import AppSettingsActions
+from views.app_toolbars import AppToolbars
 from views.layer_state import ALL_LAYERS
 from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
 from views.status_dashboard import StatusDashboard
 
 
-class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDocks, QMainWindow):
+class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDocks, AppToolbars, QMainWindow):
     """Top-level window that wires the map canvas, sidebar, menus, and controller."""
 
     def __init__(self) -> None:
@@ -54,13 +55,14 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
 
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
+        self.camera_manager = CameraDataManager()
         self.init_layouts_dock()
         self.init_layers_dock()
+        self.init_floating_tools_toolbar()
         self.add_widget_reopen_actions()
         self.retranslate()
         self.status_bar.showMessage(t("app.ready"), 5000)
 
-        self.camera_manager = CameraDataManager()
         self.ping_service = PingService(
             self.camera_manager.get_all_cameras_for_ping(),
             interval_seconds=30,
@@ -114,40 +116,50 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.zoom_fit_action.triggered.connect(self.map_canvas.fit_in_view)
 
         self.select_action = QAction(self)
+        self.select_action.setObjectName("select")
         self.select_action.setCheckable(True)
         self.select_action.setChecked(True)
         self.select_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.SELECT))
 
         self.draw_line_action = QAction(self)
+        self.draw_line_action.setObjectName("draw_line")
         self.draw_line_action.setCheckable(True)
         self.draw_line_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.LINE))
 
         self.draw_rectangle_action = QAction(self)
+        self.draw_rectangle_action.setObjectName("draw_rectangle")
         self.draw_rectangle_action.setCheckable(True)
         self.draw_rectangle_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.RECTANGLE))
 
         self.draw_zone_action = QAction(self)
+        self.draw_zone_action.setObjectName("draw_zone")
         self.draw_zone_action.setCheckable(True)
         self.draw_zone_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.ZONE))
 
         self.draw_freehand_action = QAction(self)
+        self.draw_freehand_action.setObjectName("draw_freehand")
         self.draw_freehand_action.setCheckable(True)
         self.draw_freehand_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.FREEHAND))
 
         self.add_text_action = QAction(self)
+        self.add_text_action.setObjectName("add_text")
         self.add_text_action.triggered.connect(self.add_text_annotation)
 
         self.insert_png_action = QAction(self)
+        self.insert_png_action.setObjectName("insert_png")
         self.insert_png_action.triggered.connect(self.insert_png_annotation)
 
         self.choose_color_action = QAction(self)
+        self.choose_color_action.setObjectName("choose_color")
         self.choose_color_action.triggered.connect(self.choose_drawing_color)
 
         self.delete_selected_action = QAction(self)
+        self.delete_selected_action.setObjectName("delete_selected")
         self.delete_selected_action.setShortcut("Delete")
         self.delete_selected_action.triggered.connect(self.delete_selected_drawings)
 
         self.rotate_camera_action = QAction(self)
+        self.rotate_camera_action.setObjectName("rotate_camera")
         self.rotate_camera_action.setShortcut("R")
         self.rotate_camera_action.triggered.connect(self.rotate_selected_cameras)
 
@@ -181,28 +193,38 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.view_menu.addAction(self.zoom_in_action)
         self.view_menu.addAction(self.zoom_out_action)
         self.view_menu.addAction(self.zoom_fit_action)
-        self.view_menu.addAction(self.settings_action)
+        self.view_menu.addSeparator()
+        self.view_menu.addAction(self.grid_action)
 
-        self.info_menu = self.menuBar().addMenu("")
-        self.info_menu.addAction(self.grid_action)
-        self.info_menu.addSeparator()
+        self.draw_menu = self.menuBar().addMenu("")
+        for action in [
+            self.select_action,
+            self.draw_line_action,
+            self.draw_rectangle_action,
+            self.draw_zone_action,
+            self.draw_freehand_action,
+        ]:
+            self.draw_menu.addAction(action)
+
+        self.annotate_menu = self.menuBar().addMenu("")
+        for action in [
+            self.add_text_action,
+            self.insert_png_action,
+            self.choose_color_action,
+            self.delete_selected_action,
+            self.rotate_camera_action,
+            self.settings_action,
+        ]:
+            self.annotate_menu.addAction(action)
+        self.annotate_menu.addSeparator()
         for action in self.info_actions.values():
-            self.info_menu.addAction(action)
+            self.annotate_menu.addAction(action)
 
         self.language_menu = self.menuBar().addMenu("")
         for action in self.language_actions.values():
             self.language_menu.addAction(action)
 
-        self.toolbar = QToolBar(self)
-        self.toolbar.setMovable(False)
-        self.addToolBar(self.toolbar)
-
-        self.toolbar.addAction(self.open_action)
-        self.toolbar.addAction(self.unload_map_action)
-        self.toolbar.addSeparator()
-        self.toolbar.addAction(self.zoom_in_action)
-        self.toolbar.addAction(self.zoom_out_action)
-        self.toolbar.addAction(self.zoom_fit_action)
+        self.init_two_level_toolbar()
         self.init_drawing_tools_dock()
 
     def set_canvas_mode(self, mode: DrawingMode) -> None:
@@ -283,6 +305,14 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
         self.save_current_layout_state()
         self.status_bar.showMessage(t("status.map_unloaded"), 5000)
 
+    def showEvent(self, event: object) -> None:
+        super().showEvent(event)
+        self.position_floating_tools_toolbar()
+
+    def resizeEvent(self, event: object) -> None:
+        super().resizeEvent(event)
+        self.position_floating_tools_toolbar()
+
     def closeEvent(self, event: object) -> None:
         self.ping_service.stop()
         super().closeEvent(event)
@@ -332,12 +362,14 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
             self.info_actions["dvr"].setText(t("action.show_dvr"))
             self.file_menu.setTitle(t("menu.file"))
             self.view_menu.setTitle(t("menu.view"))
-            self.info_menu.setTitle(t("menu.view"))
+            self.draw_menu.setTitle(t("menu.draw"))
+            self.annotate_menu.setTitle(t("menu.annotate"))
             self.language_menu.setTitle(t("menu.language"))
             self.layouts_dock.setWindowTitle(t("dock.layouts"))
-            self.toolbar.setWindowTitle(t("toolbar.main"))
+            self.retranslate_toolbars()
             self.map_canvas.set_default_layer_names({layer_id: t(f"layer.{layer_id}") for layer_id in ALL_LAYERS})
             if hasattr(self, "layers_panel"):
+                self.layers_panel.retranslate()
                 self.layers_panel.refresh()
             for language, action in self.language_actions.items():
                 action.setChecked(language == get_language())
@@ -349,5 +381,8 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppCameraActions, AppDock
             self.map_canvas.retranslate_camera_items()
         if hasattr(self, "status_dashboard"):
             self.status_dashboard.retranslate()
+        if hasattr(self, "floating_tools_toolbar"):
+            self.floating_tools_toolbar.retranslate()
+            self.position_floating_tools_toolbar()
         if hasattr(self, "status_bar"):
             self.status_bar.showMessage(t("app.ready"), 5000)

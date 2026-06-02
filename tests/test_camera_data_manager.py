@@ -16,6 +16,7 @@ def test_add_and_fetch_camera() -> None:
     assert saved is not None
     assert saved.name == "Lobby"
     assert saved.ip_address == "10.0.0.10"
+    assert saved.display_scale == 1.0
 
 
 def test_reject_duplicate_ip_address() -> None:
@@ -45,6 +46,42 @@ def test_update_camera_position_marks_camera_as_placed() -> None:
     assert unplaced == []
     assert placed[0].position_x == 12.5
     assert placed[0].position_y == 34.5
+    assert placed[0].layer_id == manager.default_layer_id("default", "cameras")
+
+
+def test_default_layers_and_membership_are_created() -> None:
+    manager = CameraDataManager(":memory:")
+    manager.add_camera(Camera("cam_test", "Lobby", "10.0.0.10"))
+    manager.add_drawing_shape(DrawingShape("shape_test", "Text", [0.0, 0.0], label="Note"))
+
+    layers = manager.get_layers()
+
+    assert [layer.name for layer in layers] == ["Cameras", "Drawings", "Images", "Text"]
+    assert manager.get_camera("cam_test").layer_id == manager.default_layer_id("default", "cameras")
+    assert manager.get_drawing_shapes()[0].layer_id == manager.default_layer_id("default", "text")
+
+
+def test_layer_crud_reorder_and_delete_contents() -> None:
+    manager = CameraDataManager(":memory:")
+    layer = manager.create_layer("Custom")
+    camera = Camera("cam_test", "Lobby", "10.0.0.10", layer_id=layer.id)
+    shape = DrawingShape("shape_test", "Line", [0.0, 0.0, 1.0, 1.0], layer_id=layer.id)
+    manager.add_camera(camera)
+    manager.add_drawing_shape(shape)
+
+    assert manager.rename_layer(layer.id, "Renamed")
+    assert manager.set_layer_visible(layer.id, False)
+    assert manager.set_layer_locked(layer.id, True)
+    assert manager.move_layer(layer.id, -1)
+
+    saved = next(item for item in manager.get_layers() if item.id == layer.id)
+    assert saved.name == "Renamed"
+    assert saved.visible is False
+    assert saved.locked is True
+
+    assert manager.delete_layer(layer.id)
+    assert manager.get_camera("cam_test") is None
+    assert manager.get_drawing_shapes() == []
 
 
 def test_update_camera_details_and_delete() -> None:
@@ -82,6 +119,11 @@ def test_update_camera_details_and_delete() -> None:
     assert rotated is not None
     assert rotated.rotation == 15.0
 
+    assert manager.update_camera_scale("cam_test", 2.25)
+    scaled = manager.get_camera("cam_test")
+    assert scaled is not None
+    assert scaled.display_scale == 2.25
+
     assert manager.delete_camera("cam_test")
     assert manager.get_camera("cam_test") is None
 
@@ -103,7 +145,9 @@ def test_add_and_fetch_drawing_shape() -> None:
     assert manager.add_drawing_shape(shape)
 
     saved_shapes = manager.get_drawing_shapes()
-    assert saved_shapes == [shape]
+    assert len(saved_shapes) == 1
+    assert saved_shapes[0].id == shape.id
+    assert saved_shapes[0].layer_id == manager.default_layer_id("default", "images")
     assert manager.delete_drawing_shape("shape_test")
     assert manager.get_drawing_shapes() == []
 
