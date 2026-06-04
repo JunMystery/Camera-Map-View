@@ -27,6 +27,8 @@ def test_add_and_fetch_camera() -> None:
         fov_degrees=180,
         object_locked=True,
         z_index=7,
+        object_visible=False,
+        badge_text="lb1",
     )
 
     assert manager.add_camera(camera)
@@ -40,6 +42,8 @@ def test_add_and_fetch_camera() -> None:
     assert saved.fov_degrees == 180
     assert saved.object_locked is True
     assert saved.z_index == 7
+    assert saved.object_visible is False
+    assert saved.badge_text == "LB1"
 
 
 def test_new_database_starts_without_default_layout() -> None:
@@ -81,6 +85,7 @@ def test_network_device_allows_blank_ip_and_links_are_layout_scoped() -> None:
     assert manager.get_all_cameras_for_ping() == []
     assert manager.get_linked_device_ids("switch_a") == ["server_a"]
     assert len(manager.get_device_links()) == 1
+    assert not manager.add_device_link("server_a", "switch_a")
 
 
 def test_update_camera_position_marks_camera_as_placed() -> None:
@@ -157,6 +162,24 @@ def test_layer_crud_reorder_and_delete_contents() -> None:
     assert manager.get_drawing_shapes() == []
 
 
+def test_layer_group_is_one_level_and_persistent() -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    manager.get_layers()
+    group = manager.create_layer_group("Network")
+    layer = manager.create_layer("Devices")
+
+    assert group.is_group
+    assert manager.set_layer_group(layer.id, group.id)
+
+    saved = {item.id: item for item in manager.get_layers()}
+    assert saved[layer.id].group_id == group.id
+    assert not manager.set_layer_group(group.id, group.id)
+
+    assert manager.delete_layer(group.id)
+    assert next(item for item in manager.get_layers() if item.id == layer.id).group_id == ""
+
+
 def test_update_camera_details_and_delete() -> None:
     manager = CameraDataManager(":memory:")
     _create_default_layout(manager)
@@ -177,6 +200,7 @@ def test_update_camera_details_and_delete() -> None:
         fov_degrees=360,
         object_locked=True,
         z_index=3,
+        badge_text="S1",
     )
     assert manager.update_camera_details(updated)
 
@@ -195,6 +219,7 @@ def test_update_camera_details_and_delete() -> None:
     assert saved.fov_degrees == 360
     assert saved.object_locked is True
     assert saved.z_index == 3
+    assert saved.badge_text == "S1"
 
     assert manager.update_camera_rotation("cam_test", 375.0)
     rotated = manager.get_camera("cam_test")
@@ -232,6 +257,8 @@ def test_add_and_fetch_drawing_shape() -> None:
         display_name="Site photo",
         object_locked=True,
         z_index=4,
+        fill_color="#00ff00",
+        object_visible=False,
     )
 
     assert manager.add_drawing_shape(shape)
@@ -243,8 +270,12 @@ def test_add_and_fetch_drawing_shape() -> None:
     assert saved_shapes[0].display_name == "Site photo"
     assert saved_shapes[0].object_locked is True
     assert saved_shapes[0].z_index == 4
+    assert saved_shapes[0].fill_color == "#00ff00"
+    assert saved_shapes[0].object_visible is False
     assert manager.update_drawing_shape_display_name("shape_test", "Renamed photo")
     assert manager.get_drawing_shapes()[0].display_name == "Renamed photo"
+    assert manager.update_drawing_shape_object_visible("shape_test", True)
+    assert manager.get_drawing_shapes()[0].object_visible is True
     assert manager.delete_drawing_shape("shape_test")
     assert manager.get_drawing_shapes() == []
 
@@ -255,7 +286,16 @@ def test_update_drawing_shape_persists_text_style() -> None:
     shape = DrawingShape("shape_text", "Text", [10.0, 20.0], color="#111111", line_thickness=18, label="Old")
     manager.add_drawing_shape(shape)
 
-    updated = DrawingShape("shape_text", "Text", [30.0, 40.0], color="#00ff00", line_thickness=24, label="New", display_name="Layer text")
+    updated = DrawingShape(
+        "shape_text",
+        "Text",
+        [30.0, 40.0],
+        color="#00ff00",
+        line_thickness=24,
+        label="New",
+        display_name="Layer text",
+        fill_color="#ff00ff",
+    )
 
     assert manager.update_drawing_shape(updated)
     saved = manager.get_drawing_shapes()[0]
@@ -264,6 +304,7 @@ def test_update_drawing_shape_persists_text_style() -> None:
     assert saved.line_thickness == 24
     assert saved.points == [30.0, 40.0]
     assert saved.display_name == "Layer text"
+    assert saved.fill_color == "#ff00ff"
 
 
 def test_database_manager_creates_startup_backup(tmp_path) -> None:

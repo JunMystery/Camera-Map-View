@@ -129,7 +129,21 @@ class CameraItem(QGraphicsItem):
 
     def boundingRect(self) -> QRectF:
         """Return the drawable area for icon, field-of-view wedge, and label."""
-        return QRectF(-64, -64, 136, 136)
+        return QRectF(-170, -170, 340, 220)
+
+    def shape(self) -> QPainterPath:
+        """Return the selectable body/handle shape, excluding the FOV overlay."""
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(-20, -18, 40, 36), 5, 5)
+        if self.isSelected():
+            path.addRect(self._resize_handle_hit_rect())
+            if self.camera.device_kind == DEVICE_KIND_CAMERA:
+                ring = QPainterPath()
+                ring.addEllipse(QPointF(0, 0), 46, 46)
+                stroker = QPainterPath()
+                stroker.addEllipse(QPointF(0, 0), 56, 56)
+                path = path.united(stroker.subtracted(ring))
+        return path
 
     def paint(
         self,
@@ -142,47 +156,48 @@ class CameraItem(QGraphicsItem):
 
         is_selected = self.isSelected()
         is_camera = self.camera.device_kind == DEVICE_KIND_CAMERA
-        fov_color = QColor(DANGER)
-        fov_color.setAlpha(110 if is_selected else 55)
+        fov_color = self._fov_fill_color(is_selected)
 
         if is_camera:
             painter.save()
             painter.rotate(self.camera.rotation)
+            fov_radius = 50.0 * (3.0 if is_selected else 1.2)
 
-            fov_pen = QPen(fov_color, 2.5 if is_selected else 1.5, Qt.PenStyle.DashLine)
+            fov_pen_color = self._fov_pen_color(is_selected)
+            fov_pen = QPen(fov_pen_color, 3.0 if is_selected else 1.8, Qt.PenStyle.DashLine)
             painter.setPen(fov_pen)
             if self.camera.fov_degrees >= 360:
                 painter.setBrush(QBrush(fov_color))
-                painter.drawEllipse(QPointF(0, 0), 50, 50)
+                painter.drawEllipse(QPointF(0, 0), fov_radius, fov_radius)
             else:
                 fov_span = max(1, min(int(self.camera.fov_degrees), 360))
                 fov_path = QPainterPath()
                 fov_path.moveTo(0, 0)
-                fov_path.arcTo(QRectF(-50, -50, 100, 100), -fov_span / 2, fov_span)
+                fov_path.arcTo(QRectF(-fov_radius, -fov_radius, fov_radius * 2, fov_radius * 2), -fov_span / 2, fov_span)
                 fov_path.closeSubpath()
-                painter.fillPath(fov_path, QBrush(fov_color))
+                painter.setBrush(QBrush(fov_color))
                 painter.drawPath(fov_path)
 
             painter.restore()
 
         self._paint_device_body(painter, is_selected)
 
-        if is_selected and is_camera:
-            painter.save()
-            painter.rotate(self.camera.rotation)
-            painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.DashLine))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(QPointF(0, 0), 46, 46)
-            painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.SolidLine))
-            painter.drawLine(0, 0, 46, 0)
-            painter.setBrush(QBrush(QColor(WARNING)))
-            painter.drawEllipse(41, -5, 10, 10)
-            painter.restore()
-
+        if is_selected:
+            if is_camera:
+                painter.save()
+                painter.rotate(self.camera.rotation)
+                painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.DashLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(QPointF(0, 0), 46, 46)
+                painter.setPen(QPen(QColor(WARNING), 2, Qt.PenStyle.SolidLine))
+                painter.drawLine(0, 0, 46, 0)
+                painter.setBrush(QBrush(QColor(WARNING)))
+                painter.drawEllipse(41, -5, 10, 10)
+                painter.restore()
             painter.save()
             painter.setPen(QPen(QColor(WARNING), 1.5, Qt.PenStyle.SolidLine))
             painter.setBrush(QBrush(QColor(WARNING)))
-            painter.drawRect(self._resize_handle_rect())
+            painter.drawRoundedRect(self._resize_handle_rect(), 3, 3)
             painter.restore()
 
         if not self.camera.ping_enabled or not self.camera.ip_address:
@@ -207,7 +222,6 @@ class CameraItem(QGraphicsItem):
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         """Sync model coordinates when the graphics item moves."""
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.scene():
-            value = self._clamp_to_scene(value)
             if self.snap_callback is not None:
                 snapped_x, snapped_y = self.snap_callback(value.x(), value.y())
                 return QPointF(snapped_x, snapped_y)
@@ -221,13 +235,6 @@ class CameraItem(QGraphicsItem):
             self._notify_canvas_layers_changed()
         return super().itemChange(change, value)
 
-    def _clamp_to_scene(self, point: QPointF) -> QPointF:
-        rect = self.scene().sceneRect()
-        return QPointF(
-            min(max(point.x(), rect.left()), rect.right()),
-            min(max(point.y(), rect.top()), rect.bottom()),
-        )
-
     def mouseDoubleClickEvent(self, event: Any) -> None:
         """Request editing when the camera item is double-clicked."""
         self._request_edit()
@@ -238,15 +245,18 @@ class CameraItem(QGraphicsItem):
         if not self._canvas_allows_handle_edit():
             super().mousePressEvent(event)
             return
-        if self.camera.device_kind != DEVICE_KIND_CAMERA:
-            super().mousePressEvent(event)
-            return
         if event.button() == Qt.MouseButton.LeftButton and self.isSelected() and self._is_on_resize_handle(event.pos()):
             self.is_resizing = True
             self.resize_start_distance = max(self._scene_distance_from_center(event), 1.0)
             self.resize_start_scale = self.scale()
             self.setCursor(Qt.CursorShape.SizeFDiagCursor)
             event.accept()
+            return
+        if self.camera.device_kind != DEVICE_KIND_CAMERA:
+            if event.button() == Qt.MouseButton.LeftButton and self.isSelected() and self._is_on_rotation_ring(event.pos()):
+                event.accept()
+                return
+            super().mousePressEvent(event)
             return
         if event.button() == Qt.MouseButton.LeftButton and self.isSelected() and self._is_on_rotation_ring(event.pos()):
             self.is_rotating = True
@@ -344,10 +354,20 @@ class CameraItem(QGraphicsItem):
         return 36 <= distance <= 56
 
     def _resize_handle_rect(self) -> QRectF:
-        return QRectF(48, 48, 12, 12)
+        # For cameras, place handle outside the rotation ring (distance > 56px)
+        # to prevent overlapping with the rotation ring visual and hit area
+        if self.camera.device_kind == DEVICE_KIND_CAMERA:
+            return QRectF(43, 43, 14, 14)  # Center at (50, 50), distance ~70.7px
+        return QRectF(28, 22, 14, 14)
+
+    def _resize_handle_hit_rect(self) -> QRectF:
+        # Larger hit area for easier grabbing, positioned same center as visual rect
+        if self.camera.device_kind == DEVICE_KIND_CAMERA:
+            return QRectF(36, 36, 28, 28)  # Center at (50, 50), distance ~70.7px
+        return QRectF(21, 15, 28, 28)
 
     def _is_on_resize_handle(self, point: QPointF) -> bool:
-        return self._resize_handle_rect().contains(point)
+        return self._resize_handle_hit_rect().contains(point)
 
     def _scene_distance_from_center(self, event: Any) -> float:
         scene_pos = event.scenePos() if hasattr(event, "scenePos") else self.mapToScene(event.pos())
@@ -392,8 +412,8 @@ class CameraItem(QGraphicsItem):
             refresh_links()
 
     def _paint_device_body(self, painter: QPainter, is_selected: bool) -> None:
-        outline_color = QColor(WARNING if is_selected else TEXT_ON_DARK)
-        painter.setPen(QPen(outline_color, 2 if is_selected else 1.5))
+        outline_color = QColor(WARNING if is_selected else DANGER)
+        painter.setPen(QPen(outline_color, 2.4 if is_selected else 1.8))
         painter.setBrush(QBrush(QColor("#f8fafc" if self.light_theme else "#1e293b")))
         painter.drawRoundedRect(QRectF(-20, -18, 40, 36), 5, 5)
 
@@ -405,5 +425,28 @@ class CameraItem(QGraphicsItem):
             painter.setPen(QPen(QColor(TEXT_WHITE if not self.light_theme else LIGHT_TEXT), 1))
             initials = self.camera.device_kind[:2].upper()
             painter.drawText(QRectF(-16, -12, 32, 24), Qt.AlignmentFlag.AlignCenter, initials)
+        else:
+            painter.drawPixmap(-14, -14, 28, 28, pixmap)
+        self._paint_badge(painter)
+
+    def _paint_badge(self, painter: QPainter) -> None:
+        badge = self.camera.badge_text.strip().upper()[:3]
+        if not badge:
             return
-        painter.drawPixmap(-14, -14, 28, 28, pixmap)
+        rect = QRectF(8, -28, 24, 16)
+        painter.setPen(QPen(QColor(DANGER), 1.2))
+        painter.setBrush(QBrush(QColor(DANGER)))
+        painter.drawRoundedRect(rect, 4, 4)
+        font = QFont("Inter", 7)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(QColor(TEXT_WHITE), 1))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge)
+
+    def _fov_fill_color(self, is_selected: bool) -> QColor:
+        """Return a red FOV fill that stays visibly red over floor plans."""
+        return QColor(239, 68, 68, 110 if is_selected else 52)
+
+    def _fov_pen_color(self, is_selected: bool) -> QColor:
+        """Return a high-contrast red FOV outline."""
+        return QColor(239, 68, 68, 245 if is_selected else 190)

@@ -14,7 +14,7 @@ from models.device_link_model import DeviceLink
 from models.drawing_shape_model import DrawingShape
 from models.map_layout_model import MapLayout
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 def export_map_package(
@@ -54,7 +54,7 @@ def import_map_package(path: str | Path, manager: CameraDataManager) -> str | No
         return None
     with ZipFile(source, "r") as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-        if int(manifest.get("schema_version", 0)) not in {1, 2, SCHEMA_VERSION}:
+        if int(manifest.get("schema_version", 0)) not in {1, 2, 3, 4, SCHEMA_VERSION}:
             return None
         layout = _create_import_layout(manager, manifest)
         asset_dir = Path("assets/maps") / f"package_{layout.id}"
@@ -136,8 +136,8 @@ def _import_layers(manager: CameraDataManager, rows: list[dict[str, object]], la
         layer_map[old_id] = new_id
         manager.db.execute(
             """
-            INSERT OR REPLACE INTO canvas_layers (id, layout_id, name, position, visible, locked)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO canvas_layers (id, layout_id, name, position, visible, locked, group_id, is_group)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 new_id,
@@ -146,6 +146,8 @@ def _import_layers(manager: CameraDataManager, rows: list[dict[str, object]], la
                 int(row.get("position") or 0),
                 int(bool(row.get("visible", True))),
                 int(bool(row.get("locked", False))),
+                layer_map.get(str(row.get("group_id") or ""), ""),
+                int(bool(row.get("is_group", False))),
             ),
         )
     return layer_map

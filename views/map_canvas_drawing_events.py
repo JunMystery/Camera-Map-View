@@ -72,7 +72,13 @@ class MapCanvasDrawingEvents:
         return self.drawing_tool.item_from_shape(shape) if shape is not None else None
 
     def _shape_from_points(self, start_pos: QPointF, end_pos: QPointF) -> DrawingShape | None:
-        return self.drawing_tool.shape_from_points(self.drawing_mode, start_pos, end_pos, self.drawing_color)
+        return self.drawing_tool.shape_from_points(
+            self.drawing_mode,
+            start_pos,
+            end_pos,
+            self.drawing_color,
+            getattr(self, "drawing_fill_color", ""),
+        )
 
     def _handle_device_link_click(self, event: Any) -> bool:
         item = self.itemAt(event.position().toPoint())
@@ -86,7 +92,9 @@ class MapCanvasDrawingEvents:
             event.accept()
             return True
         if self.pending_device_link_source_id != device_id:
+            self._begin_history_step("device_link_create")
             self.device_link_created.emit(self.pending_device_link_source_id, device_id)
+            self._commit_history_step("device_link_create")
         self.pending_device_link_source_id = ""
         self.scene.clearSelection()
         item.setSelected(True)

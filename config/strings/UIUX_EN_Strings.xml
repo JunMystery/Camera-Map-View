@@ -17,6 +17,7 @@
     <string key="action.settings">Settings</string>
     <string key="action.import_package">Import diagram...</string>
     <string key="action.export_package">Export diagram...</string>
+    <string key="action.export_snapshot">Export snapshot...</string>
     <string key="action.undo">Undo</string>
     <string key="action.redo">Redo</string>
     <string key="action.zoom_in">Zoom in</string>
@@ -26,14 +27,21 @@
     <string key="action.pan">Pan map</string>
     <string key="action.draw_line">Draw line</string>
     <string key="action.draw_rectangle">Draw rectangle</string>
+    <string key="action.draw_rounded_rectangle">Draw rounded rectangle</string>
+    <string key="action.draw_ellipse">Draw ellipse</string>
+    <string key="action.draw_triangle">Draw triangle</string>
     <string key="action.draw_zone">Draw zone</string>
     <string key="action.draw_freehand">Freehand</string>
+    <string key="action.shapes">Shapes</string>
     <string key="action.add_text">Add text</string>
-    <string key="action.insert_png">Insert PNG</string>
+    <string key="action.insert_png">Insert image</string>
     <string key="action.choose_color">Choose color</string>
+    <string key="action.choose_fill_color">Choose fill color</string>
+    <string key="action.no_fill">No fill</string>
     <string key="action.delete_selected">Delete selected</string>
     <string key="action.rotate_camera">Rotate camera</string>
     <string key="action.toggle_grid">Show grid</string>
+    <string key="action.toggle_background_map">Show background map</string>
     <string key="action.show_name">Name</string>
     <string key="action.show_zone">Zone</string>
     <string key="action.show_ip">IP</string>
@@ -58,6 +66,8 @@
     <string key="layer.name">Name</string>
     <string key="layer.count">Count</string>
     <string key="layer.add">Add layer</string>
+    <string key="layer.group">Group</string>
+    <string key="layer.group_add">Add layer group</string>
     <string key="layer.new">Layer</string>
     <string key="layer.select">Select</string>
     <string key="layer.expand">Expand layer</string>
@@ -65,6 +75,8 @@
     <string key="layer.delete">Delete</string>
     <string key="layer.up">Up</string>
     <string key="layer.down">Down</string>
+    <string key="layer.bring_forward">Bring forward</string>
+    <string key="layer.send_backward">Send backward</string>
     <string key="layer.move_selected">Move selected</string>
     <string key="layer.delete_confirm">This layer contains objects. Deleting it will also delete those objects. Continue?</string>
     <string key="layout.add">Add</string>
@@ -75,9 +87,9 @@
     <string key="layout.edit_title">Edit layout</string>
     <string key="layout.name">Layout name</string>
     <string key="dialog.choose_map.title">Choose floor plan image</string>
-    <string key="dialog.choose_map.filter">Images (*.png *.jpg *.jpeg *.bmp)</string>
-    <string key="dialog.choose_png.title">Choose PNG image</string>
-    <string key="dialog.choose_png.filter">PNG (*.png)</string>
+    <string key="dialog.choose_map.filter">Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*.*)</string>
+    <string key="dialog.choose_png.title">Choose image</string>
+    <string key="dialog.choose_png.filter">Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*.*)</string>
     <string key="dialog.choose_location_image.title">Choose camera location image</string>
     <string key="dialog.image.filter">Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*.*)</string>
     <string key="dialog.choose_csv.title">Choose device CSV</string>
@@ -86,6 +98,8 @@
     <string key="dialog.choose_package.title">Choose diagram package</string>
     <string key="dialog.save_package.title">Save diagram package</string>
     <string key="dialog.package.filter">Camera Map (*.cmvmap)</string>
+    <string key="dialog.save_snapshot.title">Export snapshot</string>
+    <string key="dialog.save_snapshot.filter">PNG image (*.png);;JPEG image (*.jpg *.jpeg)</string>
     <string key="settings.title">Settings</string>
     <string key="settings.network">Network</string>
     <string key="settings.canvas">Canvas</string>
@@ -107,6 +121,7 @@
     <string key="dialog.add_text.color">Color</string>
     <string key="dialog.edit_text.title">Edit text</string>
     <string key="dialog.choose_color.title">Choose drawing color</string>
+    <string key="dialog.choose_fill_color.title">Choose fill color</string>
     <string key="dialog.confirm_unload_map.title">Unload background map?</string>
     <string key="dialog.confirm_unload_map.body">The current background map will be removed from the canvas. Continue?</string>
     <string key="dialog.confirm_exit.title">Exit application?</string>
@@ -117,6 +132,7 @@
     <string key="error.load_file.body">The selected image could not be loaded or is not a valid image file.</string>
     <string key="error.package.title">Diagram package error</string>
     <string key="error.package.body">Could not import or export the selected diagram package.</string>
+    <string key="error.snapshot_failed">Could not export the current canvas snapshot.</string>
     <string key="error.location_image_invalid">Could not read the selected location image.</string>
     <string key="error.location_image_missing.title">Location image not found</string>
     <string key="error.location_image_missing.body">The camera location image is missing or cannot be opened.</string>
@@ -124,6 +140,7 @@
     <string key="status.map_unloaded">Unloaded background map.</string>
     <string key="status.package_exported">Exported diagram package.</string>
     <string key="status.package_imported">Imported diagram package.</string>
+    <string key="status.snapshot_exported">Exported snapshot: {filename}</string>
     <string key="camera_panel.title">Unplaced Devices</string>
     <string key="camera_panel.title_unplaced">Unplaced Devices</string>
     <string key="camera_panel.title_placed">Placed Devices</string>
@@ -133,6 +150,7 @@
     <string key="camera_panel.add">Add</string>
     <string key="camera_panel.edit">Edit</string>
     <string key="camera_panel.delete">Delete</string>
+    <string key="camera_panel.ungroup">Ungroup</string>
     <string key="camera_panel.import">Import CSV</string>
     <string key="camera_panel.export">Export CSV</string>
     <string key="camera_panel.no_dvr">No DVR</string>
@@ -199,7 +217,7 @@ Notes: {notes}</string>
     <string key="status.active_ping_failed">Could not start ping to {ip_address}.</string>
     <string key="status.undo_unavailable">No action is available to undo.</string>
     <string key="status.redo_unavailable">No action is available to redo.</string>
-    <string key="status.png_inserted">Inserted PNG image.</string>
+    <string key="status.png_inserted">Inserted image.</string>
     <string key="status.csv_imported">Imported {count} camera(s) from CSV.</string>
     <string key="status.csv_exported">Exported camera CSV.</string>
     <string key="status.layer_selected">Selected {count} layer item(s).</string>
@@ -238,6 +256,7 @@ Ping: {ping}
 Notes: {notes}</string>
     <string key="device_dialog.title">Device Properties</string>
     <string key="device_dialog.name">Device name</string>
+    <string key="device_dialog.badge">Badge</string>
     <string key="device_dialog.kind">Device kind</string>
     <string key="device_dialog.variant">Variant</string>
     <string key="device_dialog.ping_enabled">Ping device</string>
@@ -298,6 +317,7 @@ Notes: {notes}</string>
     <string key="status.device_link_skipped">Could not create device link.</string>
     <string key="status.device_link_removed">Removed device link.</string>
     <string key="status.device_link_remove_failed">Could not remove device link.</string>
+    <string key="status.background_map_missing">No background map is loaded.</string>
     <string key="seed.cam_01.name">Main Gate</string>
     <string key="seed.cam_01.notes">Main parking lot view</string>
     <string key="seed.cam_02.name">Reception</string>

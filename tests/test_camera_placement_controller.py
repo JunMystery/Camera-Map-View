@@ -1,12 +1,13 @@
 """Tests for the camera placement controller."""
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtWidgets import QApplication, QMenu
 
 from controllers.camera_data_manager import CameraDataManager
 from controllers.camera_placement_controller import CameraPlacementController
 from models.camera_data_model import Camera
 from models.device_catalog import DEVICE_KIND_SERVER, DEVICE_KIND_SWITCH
+from models.device_link_model import DeviceLink
 from models.drawing_shape_model import DrawingShape
 from views.control_layout_panel import ControlLayoutPanel as CameraPanel
 from views.map_drawing_tools import DrawingMode
@@ -64,6 +65,34 @@ def _tree_item_branch(item):
     yield item
     for child_index in range(item.childCount()):
         yield from _tree_item_branch(item.child(child_index))
+
+
+def _camera_item(panel: CameraPanel, camera_id: str):
+    return next(item for item in _tree_items(panel) if item.data(0, Qt.ItemDataRole.UserRole) == camera_id)
+
+
+class _DropEvent:
+    def __init__(self, mime_data) -> None:
+        self._mime_data = mime_data
+        self.accepted = False
+        self.ignored = False
+        self.drop_action = None
+
+    def mimeData(self):
+        return self._mime_data
+
+    def position(self) -> QPointF:
+        return QPointF(0, 0)
+
+    def setDropAction(self, action) -> None:
+        self.drop_action = action
+
+    def accept(self) -> None:
+        self.accepted = True
+        self.ignored = False
+
+    def ignore(self) -> None:
+        self.ignored = True
 
 
 def test_drawing_created_signal_persists_shape() -> None:
@@ -336,11 +365,189 @@ def test_camera_panel_search_toggle_and_link_tree_grouping() -> None:
     assert "Lobby" in root.child(0).child(0).text(0)
 
     panel.search_input.setText("Lobby")
-    assert _camera_count(panel) == 1
+    root = panel.tree_widget.topLevelItem(0)
+    assert _camera_count(panel) == 3
+    assert "Server A" in root.text(0)
+    assert "Switch A" in root.child(0).text(0)
+    assert "Lobby" in root.child(0).child(0).text(0)
+    assert root.data(0, Qt.ItemDataRole.UserRole) != "group:unlinked"
+    panel.search_input.setText("Switch")
+    root = panel.tree_widget.topLevelItem(0)
+    assert _camera_count(panel) == 3
+    assert "Switch A" in root.child(0).text(0)
+    assert "Lobby" in root.child(0).child(0).text(0)
     panel.search_input.clear()
     panel.unplaced_button.click()
     assert _camera_count(panel) == 1
     assert "Gate" in panel.tree_widget.topLevelItem(0).child(0).text(0)
+    app.processEvents()
+
+
+def test_canvas_device_can_move_outside_scene_without_bounds_clamp() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(200, 160)
+    camera = Camera("cam_edge", "Edge", "10.0.0.10", position_x=20.0, position_y=20.0)
+    item = canvas.add_camera_item(camera)
+    item.setSelected(True)
+
+    item.setPos(-45.0, -30.0)
+    canvas.scene.clamp_selected_items()
+
+    assert item.pos().x() == -45.0
+    assert item.pos().y() == -30.0
+    assert camera.position_x == -45.0
+    assert camera.position_y == -30.0
+    app.processEvents()
+
+
+def test_camera_tree_quick_link_drop_accepts_only_created_link(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    panel.set_cameras([camera, switch], {"cam_a", "switch_a"}, [])
+    created = []
+    panel.set_device_link_request_handler(lambda source, target: created.append((source, target)) or True)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "switch_a"))
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "cam_a")))
+    panel.tree_widget.dropEvent(event)
+
+    assert created == [("cam_a", "switch_a")]
+    assert event.accepted is True
+    assert event.drop_action == Qt.DropAction.CopyAction
+    app.processEvents()
+
+
+def test_camera_tree_quick_link_drop_ignores_rejected_handler(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    panel.set_cameras([camera, switch], {"cam_a", "switch_a"}, [])
+    panel.set_device_link_request_handler(lambda _source, _target: False)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "switch_a"))
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "cam_a")))
+    panel.tree_widget.dropEvent(event)
+
+    assert event.accepted is False
+    assert event.ignored is True
+    app.processEvents()
+
+
+def test_camera_tree_quick_link_drop_rejects_duplicate_and_descendant(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    server = Camera("server_a", "Server A", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    links = [
+        DeviceLink("link_1", "default", "cam_a", "switch_a"),
+        DeviceLink("link_2", "default", "switch_a", "server_a"),
+    ]
+    panel.set_cameras([camera, switch, server], {"cam_a", "switch_a", "server_a"}, links)
+    requested = []
+    panel.set_device_link_request_handler(lambda source, target: requested.append((source, target)) or True)
+
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "switch_a"))
+    duplicate = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "cam_a")))
+    panel.tree_widget.dropEvent(duplicate)
+
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "cam_a"))
+    descendant = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "switch_a")))
+    panel.tree_widget.dropEvent(descendant)
+
+    assert requested == []
+    assert duplicate.ignored is True
+    assert descendant.ignored is True
+    app.processEvents()
+
+
+def test_camera_tree_quick_link_branch_drop_links_branch_root(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    router = Camera("router_a", "Router A", "", device_kind=DEVICE_KIND_SERVER, variant="Router", ping_enabled=False)
+    links = [DeviceLink("link_1", "default", "cam_a", "switch_a")]
+    panel.set_cameras([camera, switch, router], {"cam_a", "switch_a", "router_a"}, links)
+    created = []
+    panel.set_device_link_request_handler(lambda source, target: created.append((source, target)) or True)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "router_a"))
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "switch_a")))
+    panel.tree_widget.dropEvent(event)
+
+    assert created == [("switch_a", "router_a")]
+    assert event.accepted is True
+    app.processEvents()
+
+
+def test_camera_tree_quick_link_multi_selection_links_each_source(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    camera_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    camera_b = Camera("cam_b", "Camera B", "10.0.0.11")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    panel.set_cameras([camera_a, camera_b, switch], {"cam_a", "cam_b", "switch_a"}, [])
+    created = []
+    panel.set_device_link_request_handler(lambda source, target: created.append((source, target)) or True)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "switch_a"))
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data([_camera_item(panel, "cam_a"), _camera_item(panel, "cam_b")]))
+    panel.tree_widget.dropEvent(event)
+
+    assert created == [("cam_a", "switch_a"), ("cam_b", "switch_a")]
+    assert event.accepted is True
+    app.processEvents()
+
+
+def test_camera_tree_blank_drop_ungroups_selected_sources(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    camera_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    camera_b = Camera("cam_b", "Camera B", "10.0.0.11")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    links = [
+        DeviceLink("link_1", "default", "cam_a", "switch_a"),
+        DeviceLink("link_2", "default", "cam_b", "switch_a"),
+    ]
+    panel.set_cameras([camera_a, camera_b, switch], {"cam_a", "cam_b", "switch_a"}, links)
+    ungrouped = []
+    panel.set_device_unlink_request_handler(lambda source_ids: ungrouped.extend(source_ids) or True)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: None)
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data([_camera_item(panel, "cam_a"), _camera_item(panel, "cam_b")]))
+    panel.tree_widget.dropEvent(event)
+
+    assert ungrouped == ["cam_a", "cam_b"]
+    assert event.accepted is True
+    app.processEvents()
+
+
+def test_camera_controller_ungroup_refreshes_panel_tree() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    controller = CameraPlacementController(panel, canvas, manager)
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    manager.add_camera(camera, is_placed=True)
+    manager.add_camera(switch, is_placed=True)
+    manager.add_device_link("cam_a", "switch_a")
+    controller.load_cameras("default")
+
+    assert _camera_item(panel, "cam_a").parent() is _camera_item(panel, "switch_a")
+
+    assert controller.unlink_devices_from_group(["cam_a"]) is True
+
+    assert manager.get_device_links("default") == []
+    assert _camera_item(panel, "cam_a").parent() is not _camera_item(panel, "switch_a")
+    assert panel.tree_widget.topLevelItem(0).isExpanded() is True
     app.processEvents()
 
 
@@ -371,6 +578,28 @@ def test_camera_panel_preserves_expanded_group_on_refresh() -> None:
     assert _camera_count(panel) == 1
     panel.search_input.setText("")
     assert _camera_count(panel) == 1
+    app.processEvents()
+
+
+def test_camera_panel_emits_focus_only_for_placed_devices() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    placed = Camera("cam_placed", "Placed", "10.0.0.10")
+    unplaced = Camera("cam_unplaced", "Unplaced", "10.0.0.11")
+    focused = []
+    panel.camera_focus_requested.connect(focused.append)
+
+    panel.set_cameras([placed, unplaced], {"cam_placed"})
+    placed_item = next(item for item in _tree_items(panel) if item.data(0, Qt.ItemDataRole.UserRole) == "cam_placed")
+    panel.tree_widget.setCurrentItem(placed_item)
+
+    assert focused == ["cam_placed"]
+
+    panel.unplaced_button.click()
+    unplaced_item = next(item for item in _tree_items(panel) if item.data(0, Qt.ItemDataRole.UserRole) == "cam_unplaced")
+    panel.tree_widget.setCurrentItem(unplaced_item)
+
+    assert focused == ["cam_placed"]
     app.processEvents()
 
 

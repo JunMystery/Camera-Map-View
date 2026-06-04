@@ -3,11 +3,11 @@
 import os
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPen, QPixmap
-from PyQt6.QtWidgets import QGraphicsPixmapItem
+from PyQt6.QtGui import QBrush, QColor, QPen, QPixmap
+from PyQt6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem
 
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
-from views.ui_theme import GRID_DARK, GRID_LIGHT, PRIMARY
+from views.ui_theme import CANVAS_BG_DARK, CANVAS_BG_LIGHT, GRID_DARK, GRID_LIGHT, PRIMARY
 
 
 class MapCanvasSurface:
@@ -21,6 +21,7 @@ class MapCanvasSurface:
         self.background_item = None
         self.background_source_pixmap = None
         self.scene.setSceneRect(0, 0, width, height)
+        self._ensure_canvas_bounds(width, height)
         self._add_grid_items(width, height, grid_size)
 
     def show_blank_canvas(self) -> None:
@@ -29,6 +30,7 @@ class MapCanvasSurface:
         self.remove_grid_items()
         self.background_item = None
         self.background_source_pixmap = None
+        self.remove_canvas_bounds_item()
         self.scene.setSceneRect(0, 0, 0, 0)
 
     def redraw_grid(self, grid_size: int | None = None) -> None:
@@ -36,11 +38,13 @@ class MapCanvasSurface:
         self.grid_size = grid_size or self.grid_size
         self.remove_grid_items()
         rect = self.scene.sceneRect()
+        self._ensure_canvas_bounds(int(rect.width()), int(rect.height()))
         self._add_grid_items(int(rect.width()), int(rect.height()), self.grid_size)
 
     def resize_canvas(self, width: int, height: int) -> None:
         """Resize the usable canvas area."""
         self.scene.setSceneRect(0, 0, width, height)
+        self._ensure_canvas_bounds(width, height)
         self.redraw_grid()
 
     def set_background_scale(self, scale: float) -> None:
@@ -54,6 +58,7 @@ class MapCanvasSurface:
         )
         self.background_item.setPixmap(pixmap)
         self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
+        self._ensure_canvas_bounds(pixmap.width(), pixmap.height())
         self.redraw_grid()
 
     def load_background_image(self, file_path: str) -> bool:
@@ -69,9 +74,10 @@ class MapCanvasSurface:
             scaled = pixmap.scaled(int(pixmap.width() * self.background_scale), int(pixmap.height() * self.background_scale))
             self.background_item = QGraphicsPixmapItem(scaled)
             self.background_item.setData(2, BACKGROUND_LAYER)
-            self.background_item.setVisible(self.layer_visibility.get(BACKGROUND_LAYER, True))
+            self.background_item.setVisible(self.background_map_visible and self.layer_visibility.get(BACKGROUND_LAYER, True))
             self.scene.addItem(self.background_item)
             self.scene.setSceneRect(0, 0, scaled.width(), scaled.height())
+            self._ensure_canvas_bounds(scaled.width(), scaled.height())
             self.redraw_grid()
             self.apply_layer_z_values()
             self.fit_in_view()
@@ -90,5 +96,29 @@ class MapCanvasSurface:
         self.grid_items.append(self.scene.addRect(0, 0, width, height, border_pen))
         for item in self.grid_items:
             item.setData(2, GRID_LAYER)
-        self.set_grid_visible(self.grid_visible)
+            item.setVisible(self.grid_visible)
         self.apply_layer_z_values()
+
+    def remove_canvas_bounds_item(self) -> None:
+        """Remove the persistent canvas edit-area marker."""
+        if getattr(self, "canvas_bounds_item", None) is not None:
+            self.scene.removeItem(self.canvas_bounds_item)
+            self.canvas_bounds_item = None
+
+    def _ensure_canvas_bounds(self, width: int, height: int) -> None:
+        """Draw a theme-aware canvas edit boundary independent from grid lines."""
+        if width <= 0 or height <= 0:
+            self.remove_canvas_bounds_item()
+            return
+        if getattr(self, "canvas_bounds_item", None) is None:
+            self.canvas_bounds_item = QGraphicsRectItem()
+            self.canvas_bounds_item.setData(1, "canvas_bounds")
+            self.canvas_bounds_item.setZValue(-25)
+            self.scene.addItem(self.canvas_bounds_item)
+        fill = QColor(CANVAS_BG_LIGHT if self.light_theme else CANVAS_BG_DARK)
+        fill.setAlpha(12 if self.light_theme else 16)
+        border = QColor("#2563eb" if self.light_theme else "#93c5fd")
+        self.canvas_bounds_item.setRect(0, 0, width, height)
+        self.canvas_bounds_item.setBrush(QBrush(fill))
+        self.canvas_bounds_item.setPen(QPen(border, 2.0, Qt.PenStyle.SolidLine))
+        self.canvas_bounds_item.setVisible(True)

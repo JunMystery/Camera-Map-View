@@ -1,0 +1,7 @@
+.pytest_tmp_*
+__pycache__
+*.pyc
+.pytest_cache
+.env
+venv/
+node_modules/

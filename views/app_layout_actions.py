@@ -22,6 +22,7 @@ class AppLayoutActions:
             self.enter_blank_layout_state()
             return
         self.save_current_layout_state()
+        self._clear_canvas_history()
         self.current_layout_id = layout_id
         layout = self.camera_manager.get_layout(layout_id)
         if layout is not None:
@@ -56,10 +57,13 @@ class AppLayoutActions:
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         updated_layout = dialog.get_layout()
-        self.camera_manager.update_layout(updated_layout)
         if layout_id == self.current_layout_id:
+            self._begin_canvas_history("layout_properties")
+            self.camera_manager.update_layout(updated_layout)
             self.apply_layout_to_canvas(updated_layout)
-            self.save_current_layout_state()
+            self._commit_canvas_history("layout_properties")
+        else:
+            self.camera_manager.update_layout(updated_layout)
         self.refresh_layouts_panel()
 
     def delete_layout(self, layout_id: str) -> None:
@@ -69,6 +73,7 @@ class AppLayoutActions:
             return
         if not confirm_dialog.confirm(self, t("dialog.confirm_delete_layout.title"), t("dialog.confirm_delete_layout.body", name=layout.name)):
             return
+        self._clear_canvas_history()
         if self.camera_manager.delete_layout(layout_id):
             layouts = self.camera_manager.get_layouts()
             if layouts:
@@ -89,9 +94,11 @@ class AppLayoutActions:
             }
         )
         self.map_canvas.background_scale = layout.background_scale
+        self.map_canvas.grid_size = layout.grid_size
         self.current_background_path = layout.background_path
         if layout.background_path:
-            self.map_canvas.load_background_image(layout.background_path)
+            if self.map_canvas.load_background_image(layout.background_path):
+                self.map_canvas.redraw_grid(layout.grid_size)
         else:
             self.map_canvas.draw_default_grid(layout.canvas_width, layout.canvas_height, layout.grid_size)
 
@@ -112,6 +119,7 @@ class AppLayoutActions:
         """Clear layout-scoped UI when no layout exists."""
         self.current_layout_id = ""
         self.current_background_path = ""
+        self._clear_canvas_history()
         self.map_canvas.clear_map_items()
         self.map_canvas.show_blank_canvas()
         self.map_canvas.set_canvas_layers([], "")

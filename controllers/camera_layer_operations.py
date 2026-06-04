@@ -17,10 +17,10 @@ class CameraLayerOperations:
         if not self._layer_rows(layout_id):
             self.db.execute(
                 """
-                INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked, group_id, is_group)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self._new_layer_id(), layout_id, "Layer 1", 0, 1, 0),
+                (self._new_layer_id(), layout_id, "Layer 1", 0, 1, 0, "", 0),
             )
         self._assign_default_memberships(layout_id)
 
@@ -43,19 +43,42 @@ class CameraLayerOperations:
         )
         self.db.execute(
             """
-            INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked, group_id, is_group)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (layer.id, layer.layout_id, layer.name, layer.position, int(layer.visible), int(layer.locked)),
+            (layer.id, layer.layout_id, layer.name, layer.position, int(layer.visible), int(layer.locked), "", 0),
         )
         return layer
+
+    def create_layer_group(self, name: str, layout_id: str = "default") -> CanvasLayer:
+        """Create a top-level one-level layer group."""
+        self._migrate_legacy_default_layers(layout_id)
+        row = self.db.fetch_one(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM canvas_layers WHERE layout_id = ?",
+            (layout_id,),
+        )
+        group = CanvasLayer(
+            id=self._new_layer_id("group"),
+            layout_id=layout_id,
+            name=name.strip() or "Group",
+            position=int(row["next_position"] if row else 0),
+            is_group=True,
+        )
+        self.db.execute(
+            """
+            INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked, group_id, is_group)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (group.id, group.layout_id, group.name, group.position, int(group.visible), int(group.locked), "", 1),
+        )
+        return group
 
     def get_layers(self, layout_id: str = "default") -> list[CanvasLayer]:
         """Return the ordered layers for one layout."""
         self.ensure_default_layers(layout_id)
         rows = self.db.fetch_all(
             """
-            SELECT id, layout_id, name, position, visible, locked
+            SELECT id, layout_id, name, position, visible, locked, group_id, is_group
             FROM canvas_layers
             WHERE layout_id = ?
             ORDER BY position, name
@@ -103,6 +126,11 @@ class CameraLayerOperations:
     def delete_layer(self, layer_id: str) -> bool:
         """Delete a layer and contained cameras/drawings."""
         try:
+            row = self.db.fetch_one("SELECT is_group FROM canvas_layers WHERE id = ?", (layer_id,))
+            if row is not None and bool(row["is_group"]):
+                self.db.execute("UPDATE canvas_layers SET group_id = '' WHERE group_id = ?", (layer_id,))
+                cursor = self.db.execute("DELETE FROM canvas_layers WHERE id = ?", (layer_id,))
+                return cursor.rowcount > 0
             self.db.execute("DELETE FROM cameras WHERE layer_id = ?", (layer_id,))
             self.db.execute("DELETE FROM drawing_shapes WHERE layer_id = ?", (layer_id,))
             cursor = self.db.execute("DELETE FROM canvas_layers WHERE id = ?", (layer_id,))
@@ -151,6 +179,47 @@ class CameraLayerOperations:
             cursor = self.db.execute(
                 "UPDATE drawing_shapes SET object_locked = ? WHERE id = ? AND layout_id = ?",
                 (int(locked), shape_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
+    def set_layer_group(self, layer_id: str, group_id: str, layout_id: str = "default") -> bool:
+        """Assign a regular layer to a top-level group or remove it from a group."""
+        if group_id:
+            group = self.db.fetch_one(
+                "SELECT id FROM canvas_layers WHERE id = ? AND layout_id = ? AND is_group = 1 AND COALESCE(group_id, '') = ''",
+                (group_id, layout_id),
+            )
+            if group is None:
+                return False
+        cursor = self.db.execute(
+            """
+            UPDATE canvas_layers
+            SET group_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND layout_id = ? AND is_group = 0
+            """,
+            (group_id, layer_id, layout_id),
+        )
+        return cursor.rowcount > 0
+
+    def update_camera_object_visible(self, camera_id: str, visible: bool, layout_id: str | None = None) -> bool:
+        """Persist a camera object visibility flag."""
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE cameras SET object_visible = ? WHERE id = ?", (int(visible), camera_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE cameras SET object_visible = ? WHERE id = ? AND layout_id = ?",
+                (int(visible), camera_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_drawing_shape_object_visible(self, shape_id: str, visible: bool, layout_id: str | None = None) -> bool:
+        """Persist a drawing object visibility flag."""
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE drawing_shapes SET object_visible = ? WHERE id = ?", (int(visible), shape_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE drawing_shapes SET object_visible = ? WHERE id = ? AND layout_id = ?",
+                (int(visible), shape_id, layout_id),
             )
         return cursor.rowcount > 0
 
@@ -205,7 +274,7 @@ class CameraLayerOperations:
     def first_layer_id(self, layout_id: str = "default") -> str:
         """Return the first user layer for a layout."""
         row = self.db.fetch_one(
-            "SELECT id FROM canvas_layers WHERE layout_id = ? ORDER BY position, name LIMIT 1",
+            "SELECT id FROM canvas_layers WHERE layout_id = ? AND is_group = 0 ORDER BY position, name LIMIT 1",
             (layout_id,),
         )
         return str(row["id"]) if row else ""
@@ -226,10 +295,10 @@ class CameraLayerOperations:
             target_id = self._new_layer_id()
             self.db.execute(
                 """
-                INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO canvas_layers (id, layout_id, name, position, visible, locked, group_id, is_group)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (target_id, layout_id, "Layer 1", 0, 1, 0),
+                (target_id, layout_id, "Layer 1", 0, 1, 0, "", 0),
             )
         placeholders = ",".join("?" for _ in legacy_ids)
         params = (target_id, layout_id, *legacy_ids)
@@ -249,7 +318,7 @@ class CameraLayerOperations:
 
     def _layer_rows(self, layout_id: str) -> list[sqlite3.Row]:
         return self.db.fetch_all(
-            "SELECT id, layout_id, name, position, visible, locked FROM canvas_layers WHERE layout_id = ?",
+            "SELECT id, layout_id, name, position, visible, locked, group_id, is_group FROM canvas_layers WHERE layout_id = ?",
             (layout_id,),
         )
 
@@ -257,8 +326,8 @@ class CameraLayerOperations:
         for position, layer in enumerate(self.get_layers(layout_id)):
             self.db.execute("UPDATE canvas_layers SET position = ? WHERE id = ?", (position, layer.id))
 
-    def _new_layer_id(self) -> str:
-        return f"layer_{uuid.uuid4().hex}"
+    def _new_layer_id(self, prefix: str = "layer") -> str:
+        return f"{prefix}_{uuid.uuid4().hex}"
 
     def _layout_exists(self, layout_id: str) -> bool:
         return self.db.fetch_one("SELECT id FROM map_layouts WHERE id = ?", (layout_id,)) is not None
@@ -271,4 +340,6 @@ class CameraLayerOperations:
             position=row["position"],
             visible=bool(row["visible"]),
             locked=bool(row["locked"]),
+            group_id=row["group_id"] or "",
+            is_group=bool(row["is_group"]),
         )

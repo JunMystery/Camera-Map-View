@@ -9,8 +9,14 @@ from config.i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES, get_language, set_
 from controllers.camera_data_manager import CameraDataManager
 from controllers.camera_placement_controller import CameraPlacementController
 from services.app_settings_service import load_app_settings
+from services.canvas_history_service import (
+    CanvasHistoryManager,
+    CanvasStateSnapshot,
+    capture_layout_snapshot,
+    restore_layout_snapshot,
+)
 from services.network_ping_service import PingService
-from utils.image_assets import import_png_asset
+from utils.image_assets import import_background_map_image, import_image_asset
 from views import confirm_dialog
 from views.app_camera_actions import AppCameraActions
 from views.app_docks import AppDocks
@@ -49,6 +55,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.camera_manager = CameraDataManager()
+        self.init_canvas_history()
         layouts = self.camera_manager.get_layouts()
         if layouts:
             self.current_layout_id = layouts[0].id
@@ -75,6 +82,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.status_bar.showMessage,
             self.refresh_ping_cameras,
             self.refresh_status_dashboard,
+            self.canvas_history,
         )
         self.camera_controller.load_cameras(self.current_layout_id)
         self.layouts_panel.layout_selected.connect(self.switch_layout)
@@ -85,6 +93,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.camera_panel.camera_add_requested.connect(self.add_camera)
         self.camera_panel.camera_import_requested.connect(self.import_cameras_csv)
         self.camera_panel.camera_export_requested.connect(self.export_cameras_csv)
+        self.camera_panel.camera_focus_requested.connect(self.focus_camera_from_panel)
         self.ping_service.status_updated.connect(self.camera_controller.handle_camera_status_updated)
         self.refresh_ping_cameras()
         self.ping_service.start()
@@ -120,6 +129,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.export_package_action = QAction(self)
         self.export_package_action.triggered.connect(self.export_current_map_package)
 
+        self.export_snapshot_action = QAction(self)
+        self.export_snapshot_action.triggered.connect(self.export_canvas_snapshot)
+
         self.zoom_in_action = QAction(self)
         self.zoom_in_action.setShortcut("Ctrl++")
         self.zoom_in_action.triggered.connect(lambda: self.map_canvas.scale(1.25, 1.25))
@@ -153,6 +165,21 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.draw_rectangle_action.setCheckable(True)
         self.draw_rectangle_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.RECTANGLE))
 
+        self.draw_rounded_rectangle_action = QAction(self)
+        self.draw_rounded_rectangle_action.setObjectName("draw_rounded_rectangle")
+        self.draw_rounded_rectangle_action.setCheckable(True)
+        self.draw_rounded_rectangle_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.ROUNDED_RECTANGLE))
+
+        self.draw_ellipse_action = QAction(self)
+        self.draw_ellipse_action.setObjectName("draw_ellipse")
+        self.draw_ellipse_action.setCheckable(True)
+        self.draw_ellipse_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.ELLIPSE))
+
+        self.draw_triangle_action = QAction(self)
+        self.draw_triangle_action.setObjectName("draw_triangle")
+        self.draw_triangle_action.setCheckable(True)
+        self.draw_triangle_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.TRIANGLE))
+
         self.draw_zone_action = QAction(self)
         self.draw_zone_action.setObjectName("draw_zone")
         self.draw_zone_action.setCheckable(True)
@@ -180,6 +207,14 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.choose_color_action.setObjectName("choose_color")
         self.choose_color_action.triggered.connect(self.choose_drawing_color)
 
+        self.choose_fill_color_action = QAction(self)
+        self.choose_fill_color_action.setObjectName("choose_fill_color")
+        self.choose_fill_color_action.triggered.connect(self.choose_drawing_fill_color)
+
+        self.clear_fill_color_action = QAction(self)
+        self.clear_fill_color_action.setObjectName("clear_fill_color")
+        self.clear_fill_color_action.triggered.connect(self.clear_drawing_fill_color)
+
         self.delete_selected_action = QAction(self)
         self.delete_selected_action.setObjectName("delete_selected")
         self.delete_selected_action.setShortcut("Delete")
@@ -195,6 +230,12 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.grid_action.setCheckable(True)
         self.grid_action.setChecked(True)
         self.grid_action.triggered.connect(self.map_canvas.set_grid_visible)
+
+        self.toggle_background_map_action = QAction(self)
+        self.toggle_background_map_action.setObjectName("toggle_background")
+        self.toggle_background_map_action.setCheckable(True)
+        self.toggle_background_map_action.setChecked(True)
+        self.toggle_background_map_action.triggered.connect(self.toggle_background_map_visible)
 
         self.info_actions: dict[str, QAction] = {}
         for field in ("name", "zone", "ip", "dvr"):
@@ -218,6 +259,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.file_menu.addSeparator()
         self.file_menu.addAction(self.import_package_action)
         self.file_menu.addAction(self.export_package_action)
+        self.file_menu.addAction(self.export_snapshot_action)
         self.file_menu.addSeparator()
         self.file_menu.addAction(self.exit_action)
 
@@ -231,6 +273,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.view_menu.addAction(self.zoom_fit_action)
         self.view_menu.addSeparator()
         self.view_menu.addAction(self.grid_action)
+        self.view_menu.addAction(self.toggle_background_map_action)
 
         self.language_menu = self.menuBar().addMenu("")
         for action in self.language_actions.values():
@@ -245,6 +288,9 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             DrawingMode.SELECT: self.select_action,
             DrawingMode.LINE: self.draw_line_action,
             DrawingMode.RECTANGLE: self.draw_rectangle_action,
+            DrawingMode.ROUNDED_RECTANGLE: self.draw_rounded_rectangle_action,
+            DrawingMode.ELLIPSE: self.draw_ellipse_action,
+            DrawingMode.TRIANGLE: self.draw_triangle_action,
             DrawingMode.ZONE: self.draw_zone_action,
             DrawingMode.FREEHAND: self.draw_freehand_action,
             DrawingMode.LINK: self.link_device_action,
@@ -253,6 +299,59 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             action.setChecked(action_mode == mode)
 
         self.map_canvas.set_drawing_mode(mode)
+
+    def init_canvas_history(self) -> None:
+        """Wire canvas history to the active layout persistence layer."""
+        self.canvas_history = CanvasHistoryManager(
+            lambda: capture_layout_snapshot(self.camera_manager, self.current_layout_id),
+            self._restore_canvas_history,
+            self._sync_history_actions,
+            limit=10,
+        )
+        self.map_canvas.history_step_started.connect(self.canvas_history.begin)
+        self.map_canvas.history_step_finished.connect(self.canvas_history.commit)
+        self._sync_history_actions()
+
+    def _restore_canvas_history(self, snapshot: CanvasStateSnapshot) -> None:
+        restore_layout_snapshot(self.camera_manager, snapshot)
+        self.current_layout_id = snapshot.layout_id
+        layout = self.camera_manager.get_layout(snapshot.layout_id)
+        if layout is not None:
+            self.apply_layout_to_canvas(layout)
+        if hasattr(self, "camera_controller"):
+            self.camera_controller.load_cameras(snapshot.layout_id)
+        self.refresh_ping_cameras()
+        self.refresh_status_dashboard()
+        self.refresh_layouts_panel()
+
+    def _begin_canvas_history(self, label: str) -> None:
+        if hasattr(self, "canvas_history"):
+            self.canvas_history.begin(label)
+
+    def _commit_canvas_history(self, label: str) -> None:
+        if hasattr(self, "canvas_history"):
+            self.canvas_history.commit(label)
+
+    def _clear_canvas_history(self) -> None:
+        if hasattr(self, "canvas_history"):
+            self.canvas_history.clear()
+
+    def _sync_history_actions(self) -> None:
+        if not hasattr(self, "undo_action"):
+            return
+        has_layout = bool(getattr(self, "current_layout_id", ""))
+        history = getattr(self, "canvas_history", None)
+        self.undo_action.setEnabled(has_layout and history is not None and history.can_undo())
+        self.redo_action.setEnabled(has_layout and history is not None and history.can_redo())
+
+    def focus_camera_from_panel(self, camera_id: str) -> None:
+        """Select and center a placed camera chosen in the control panel."""
+        if not self.current_layout_id:
+            return
+        self.set_canvas_mode(DrawingMode.SELECT)
+        if hasattr(self, "layers_panel"):
+            self.layers_panel.clear_selection_silently()
+        self.map_canvas.select_camera_item(camera_id, center=True)
 
     def add_text_annotation(self) -> None:
         """Add or edit a text annotation."""
@@ -279,20 +378,40 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.map_canvas.add_text_annotation(text, font_size, color)
 
     def insert_png_annotation(self) -> None:
-        """Import and add a compressed PNG annotation."""
+        """Import and add an image annotation."""
         if not self.current_layout_id:
             self.status_bar.showMessage(t("status.no_layout"), 7000)
             return
         file_path, _ = QFileDialog.getOpenFileName(self, t("dialog.choose_png.title"), "", t("dialog.choose_png.filter"))
         if not file_path:
             return
-        imported = import_png_asset(file_path)
+        imported = import_image_asset(file_path)
         if imported is None:
             QMessageBox.critical(self, t("error.load_file.title"), t("error.load_file.body"))
             return
         image_path, width, height = imported
         self.map_canvas.add_image_annotation(image_path, width, height)
         self.status_bar.showMessage(t("status.png_inserted"), 5000)
+
+    def export_canvas_snapshot(self) -> None:
+        """Export the current visible layout as a static image for reports."""
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            t("dialog.save_snapshot.title"),
+            "",
+            t("dialog.save_snapshot.filter"),
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith((".png", ".jpg", ".jpeg")):
+            file_path = f"{file_path}.png"
+        if self.map_canvas.export_snapshot(file_path):
+            self.status_bar.showMessage(t("status.snapshot_exported", filename=os.path.basename(file_path)), 5000)
+            return
+        QMessageBox.critical(self, t("error.load_file.title"), t("error.snapshot_failed"))
 
     def choose_drawing_color(self) -> None:
         """Open a color picker for map drawings."""
@@ -302,6 +421,25 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         color = QColorDialog.getColor(parent=self, title=t("dialog.choose_color.title"))
         if color.isValid():
             self.map_canvas.set_drawing_color(color.name())
+            if hasattr(self, "drawing_tools_panel"):
+                self.drawing_tools_panel.set_drawing_color(color.name())
+
+    def choose_drawing_fill_color(self) -> None:
+        """Open a color picker for closed-shape fills."""
+        if not self.current_layout_id:
+            self.status_bar.showMessage(t("status.no_layout"), 7000)
+            return
+        color = QColorDialog.getColor(parent=self, title=t("dialog.choose_fill_color.title"))
+        if color.isValid():
+            self.map_canvas.set_drawing_fill_color(color.name())
+            if hasattr(self, "drawing_tools_panel"):
+                self.drawing_tools_panel.set_fill_color(color.name())
+
+    def clear_drawing_fill_color(self) -> None:
+        """Disable fill for new closed shapes."""
+        self.map_canvas.clear_drawing_fill_color()
+        if hasattr(self, "drawing_tools_panel"):
+            self.drawing_tools_panel.set_fill_color("")
 
     def delete_selected_drawings(self) -> None:
         """Delete selected drawable items."""
@@ -320,19 +458,21 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         if count:
             self.status_bar.showMessage(t("status.camera_rotated", count=count), 5000)
 
+    def toggle_background_map_visible(self, visible: bool) -> None:
+        """Show or hide the current background map without unloading it."""
+        self.map_canvas.set_background_map_visible(visible)
+        if self.map_canvas.background_item is None:
+            self.status_bar.showMessage(t("status.background_map_missing"), 4000)
+
     def undo_last_action(self) -> None:
         """Trigger the canvas undo hook when available."""
-        undo = getattr(self.map_canvas, "undo", None)
-        if callable(undo):
-            undo()
+        if hasattr(self, "canvas_history") and self.canvas_history.undo():
             return
         self.status_bar.showMessage(t("status.undo_unavailable"), 5000)
 
     def redo_last_action(self) -> None:
         """Trigger the canvas redo hook when available."""
-        redo = getattr(self.map_canvas, "redo", None)
-        if callable(redo):
-            redo()
+        if hasattr(self, "canvas_history") and self.canvas_history.redo():
             return
         self.status_bar.showMessage(t("status.redo_unavailable"), 5000)
 
@@ -349,12 +489,25 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         if not file_path:
             return
 
-        success = self.map_canvas.load_background_image(file_path)
-        if success:
-            self.current_background_path = file_path
-            self.save_current_layout_state()
-            self.status_bar.showMessage(t("status.map_loaded", filename=os.path.basename(file_path)), 5000)
+        imported = import_background_map_image(file_path)
+        if imported is None:
+            QMessageBox.critical(
+                self,
+                t("error.load_file.title"),
+                t("error.load_file.body"),
+            )
             return
+
+        image_path, _, _ = imported
+        self._begin_canvas_history("background_load")
+        success = self.map_canvas.load_background_image(image_path)
+        if success:
+            self.current_background_path = image_path
+            self.save_current_layout_state()
+            self._commit_canvas_history("background_load")
+            self.status_bar.showMessage(t("status.map_loaded", filename=os.path.basename(image_path)), 5000)
+            return
+        self._commit_canvas_history("background_load")
 
         QMessageBox.critical(
             self,
@@ -368,9 +521,11 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             return
         if not self._confirm(t("dialog.confirm_unload_map.title"), t("dialog.confirm_unload_map.body")):
             return
+        self._begin_canvas_history("background_unload")
         self.map_canvas.unload_background_image()
         self.current_background_path = ""
         self.save_current_layout_state()
+        self._commit_canvas_history("background_unload")
         self.status_bar.showMessage(t("status.map_unloaded"), 5000)
 
     def _confirm(self, title: str, message: str) -> bool:
@@ -407,17 +562,24 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             "open_action",
             "unload_map_action",
             "export_package_action",
+            "export_snapshot_action",
             "draw_line_action",
             "draw_rectangle_action",
+            "draw_rounded_rectangle_action",
+            "draw_ellipse_action",
+            "draw_triangle_action",
             "draw_zone_action",
             "draw_freehand_action",
             "link_device_action",
             "add_text_action",
             "insert_png_action",
             "choose_color_action",
+            "choose_fill_color_action",
+            "clear_fill_color_action",
             "delete_selected_action",
             "rotate_camera_action",
             "grid_action",
+            "toggle_background_map_action",
         ):
             action = getattr(self, action_name, None)
             if action is not None:
@@ -438,6 +600,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.layers_panel.setEnabled(has_layout)
         if hasattr(self, "drawing_tools_panel"):
             self.drawing_tools_panel.setEnabled(has_layout)
+        self._sync_history_actions()
 
     def set_language(self, language: str) -> None:
         set_language(language); self.retranslate()
@@ -453,6 +616,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.unload_map_action.setText(t("action.unload_map"))
             self.import_package_action.setText(t("action.import_package"))
             self.export_package_action.setText(t("action.export_package"))
+            self.export_snapshot_action.setText(t("action.export_snapshot"))
             self.exit_action.setText(t("action.exit"))
             self.undo_action.setText(t("action.undo"))
             self.redo_action.setText(t("action.redo"))
@@ -464,15 +628,21 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.select_action.setText(t("action.select"))
             self.draw_line_action.setText(t("action.draw_line"))
             self.draw_rectangle_action.setText(t("action.draw_rectangle"))
+            self.draw_rounded_rectangle_action.setText(t("action.draw_rounded_rectangle"))
+            self.draw_ellipse_action.setText(t("action.draw_ellipse"))
+            self.draw_triangle_action.setText(t("action.draw_triangle"))
             self.draw_zone_action.setText(t("action.draw_zone"))
             self.draw_freehand_action.setText(t("action.draw_freehand"))
             self.link_device_action.setText(t("action.link_device"))
             self.add_text_action.setText(t("action.add_text"))
             self.insert_png_action.setText(t("action.insert_png"))
             self.choose_color_action.setText(t("action.choose_color"))
+            self.choose_fill_color_action.setText(t("action.choose_fill_color"))
+            self.clear_fill_color_action.setText(t("action.no_fill"))
             self.delete_selected_action.setText(t("action.delete_selected"))
             self.rotate_camera_action.setText(t("action.rotate_camera"))
             self.grid_action.setText(t("action.toggle_grid"))
+            self.toggle_background_map_action.setText(t("action.toggle_background_map"))
             self.info_actions["name"].setText(t("action.show_name"))
             self.info_actions["zone"].setText(t("action.show_zone"))
             self.info_actions["ip"].setText(t("action.show_ip"))
@@ -481,8 +651,6 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.action_menu.setTitle(t("menu.action"))
             self.view_menu.setTitle(t("menu.view"))
             self.language_menu.setTitle(t("menu.language"))
-            if hasattr(self, "drawing_tools_view_action"):
-                self.drawing_tools_view_action.setText(t("dock.drawing_tools"))
             if hasattr(self, "layers_panel"):
                 self.layers_panel.retranslate()
                 self.layers_panel.refresh()

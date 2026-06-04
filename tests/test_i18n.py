@@ -17,8 +17,8 @@ from config.i18n import (
     t,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QApplication, QCheckBox, QLabel, QMenu, QPushButton, QTabWidget, QToolButton
+from PyQt6.QtGui import QImage, QKeySequence
+from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QPushButton, QTabWidget, QToolButton
 
 from controllers.camera_data_manager import CameraDataManager
 from services.app_settings_service import DEFAULT_SETTINGS, load_app_settings, save_app_settings
@@ -119,7 +119,14 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert window.undo_action in window.action_menu.actions()
         assert window.redo_action in window.action_menu.actions()
         assert window.settings_action.text() == "Settings"
+        assert window.insert_png_action.text() == "Insert image"
+        assert window.choose_fill_color_action.text() == "Choose fill color"
+        assert window.clear_fill_color_action.text() == "No fill"
+        assert window.toggle_background_map_action.text() == "Show background map"
+        assert window.toggle_background_map_action in window.view_menu.actions()
         assert window.dock.toggleViewAction() in window.view_menu.actions()
+        assert not hasattr(window, "drawing_tools_view_action")
+        assert "Drawing Tools" not in [action.text() for action in window.view_menu.actions()]
         assert window.camera_panel is window.layouts_panel
         assert window.dock.windowTitle() == "Control Panel"
         assert not hasattr(window, "control_dock_title")
@@ -143,7 +150,10 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         window.dock.toggleViewAction().trigger()
         app.processEvents()
         assert window.dock.isVisible()
-        assert window.drawing_tools_panel.x() >= window.map_canvas.mapTo(window, window.map_canvas.rect().topLeft()).x()
+        canvas_left = window.map_canvas.mapTo(window, window.map_canvas.rect().topLeft()).x()
+        dock_right = window.dock.mapTo(window, window.dock.rect().topRight()).x()
+        assert dock_right <= canvas_left
+        assert window.drawing_tools_panel.x() >= canvas_left
         assert window.layers_dock.windowTitle() == "Layers"
         assert not hasattr(window, "layers_dock_title")
         assert window.layers_panel.close_button.property("icon_name") == "close"
@@ -156,6 +166,7 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert window.settings_action in window.menuBar().actions()
         assert window.import_package_action in window.file_menu.actions()
         assert window.export_package_action in window.file_menu.actions()
+        assert window.export_snapshot_action in window.file_menu.actions()
         assert not hasattr(window, "draw_menu")
         assert not hasattr(window, "annotate_menu")
         assert not hasattr(window, "init_two_level_toolbar")
@@ -163,7 +174,6 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert not hasattr(window, "toolbar_group_selectors")
         window.drawing_tools_panel.set_collapsed(True)
         assert not window.drawing_tools_panel.content.isVisible()
-        window._show_drawing_tools_panel()
         window.drawing_tools_panel.set_collapsed(False)
         assert window.drawing_tools_panel.content.isVisible()
         window.layers_dock.show()
@@ -178,28 +188,36 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert not window.layers_dock.features() & window.layers_dock.DockWidgetFeature.DockWidgetFloatable
         assert not window.layers_dock.features() & window.layers_dock.DockWidgetFeature.DockWidgetMovable
         assert window.layers_panel.tree.topLevelItemCount() >= 1
-        assert window.layers_panel.tree.columnCount() == 3
+        assert window.layers_panel.tree.columnCount() == 2
         assert not window.layers_panel.tree.rootIsDecorated()
         assert window.layers_panel.tree.headerItem().text(1) == "Name"
-        assert window.layers_panel.tree.headerItem().text(2) == "#"
         window.layers_panel.apply_theme(True)
         first_layer = window.layers_panel.tree.selectedItems()[0]
         assert first_layer.background(1).color().name() == LIGHT_ACTIVE_ROW
         layer_controls = window.layers_panel.tree.itemWidget(first_layer, 0)
-        assert isinstance(layer_controls.findChild(QCheckBox), QCheckBox)
-        assert isinstance(layer_controls.findChild(QToolButton), QToolButton)
+        layer_buttons = layer_controls.findChildren(QToolButton)
+        assert len(layer_buttons) >= 3
+        assert any(button.property("icon_name") in {"show", "hide"} for button in layer_buttons)
         assert window.layers_panel.tree.itemWidget(first_layer, 1) is None
-        before_count = int(first_layer.text(2))
+        first_layer.setText(1, "Layer Renamed")
+        app.processEvents()
+        assert any(state.display_name == "Layer Renamed" for state in window.map_canvas.get_layer_states())
+        first_layer = window.layers_panel.tree.selectedItems()[0]
+        before_count = first_layer.childCount()
         first_layer.setExpanded(False)
         window.map_canvas.add_drawing_shape(DrawingShape("shape_realtime", "Line", [0.0, 0.0, 20.0, 20.0]), emit_created=True)
         app.processEvents()
         refreshed_layer = window.layers_panel.tree.selectedItems()[0]
-        assert int(refreshed_layer.text(2)) == before_count + 1
+        assert refreshed_layer.childCount() == before_count + 1
         assert not refreshed_layer.isExpanded()
         refreshed_layer.setExpanded(True)
         child = refreshed_layer.child(0)
         assert child is not None
         assert child.flags() & Qt.ItemFlag.ItemIsEditable
+        object_controls = window.layers_panel.tree.itemWidget(child, 0)
+        object_buttons = object_controls.findChildren(QToolButton)
+        assert any(button.property("icon_name") in {"show", "hide"} for button in object_buttons)
+        assert any(button.property("icon_name") in {"lock", "unlock"} for button in object_buttons)
         child.setText(1, "Renamed Line")
         app.processEvents()
         assert any(state.label == "Renamed Line" for state in window.map_canvas.get_layer_object_states(window.map_canvas.active_layer_id))
@@ -209,6 +227,29 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert not hasattr(window.layers_panel, "move_button")
         assert not hasattr(window, "toolbar")
         assert window.draw_line_action in [action for menu in window.drawing_tools_panel.findChildren(QMenu) for action in menu.actions()]
+        shape_actions = [action for menu in window.drawing_tools_panel.findChildren(QMenu) for action in menu.actions()]
+        assert window.draw_rectangle_action in shape_actions
+        assert window.draw_rounded_rectangle_action in shape_actions
+        assert window.draw_ellipse_action in shape_actions
+        assert window.draw_triangle_action in shape_actions
+        assert window.draw_zone_action in shape_actions
+        assert window.rotate_camera_action not in window.drawing_tools_panel.edit_actions
+        assert window.rotate_camera_action not in [
+            button.defaultAction()
+            for button in window.drawing_tools_panel.findChildren(QToolButton)
+            if button.defaultAction() is not None
+        ]
+        assert window.choose_fill_color_action in [
+            action for menu in window.drawing_tools_panel.findChildren(QMenu) for action in menu.actions()
+        ]
+        assert window.clear_fill_color_action in [
+            action for menu in window.drawing_tools_panel.findChildren(QMenu) for action in menu.actions()
+        ]
+        assert window.toggle_background_map_action in [
+            button.defaultAction()
+            for button in window.drawing_tools_panel.findChildren(QToolButton)
+            if button.defaultAction() is not None
+        ]
         assert window.pan_action.isChecked()
         assert not window.select_action.isChecked()
         assert window.status_dashboard.total_label.text().startswith("Total:")
@@ -274,6 +315,7 @@ def test_main_window_starts_blank_when_no_layout_exists(monkeypatch, tmp_path) -
     assert window.camera_manager.get_layouts() == []
     assert window.open_action.isEnabled() is False
     assert window.export_package_action.isEnabled() is False
+    assert window.export_snapshot_action.isEnabled() is False
     assert window.camera_panel.add_button.isEnabled() is False
     assert window.import_package_action.isEnabled() is True
     assert window.map_canvas.scene.sceneRect().isNull()
@@ -418,3 +460,71 @@ def test_unload_background_map_requires_confirmation(monkeypatch) -> None:
     window.close()
     app.processEvents()
     window.camera_manager.db.close()
+
+
+def test_main_window_applies_background_layout_grid_size(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    image_path = tmp_path / "map.png"
+    image = QImage(100, 80, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+    manager.db.execute(
+        """
+        INSERT INTO map_layouts (id, name, background_path, grid_size, canvas_width, canvas_height)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("default", "Default Layout", str(image_path), 32, 1200, 900),
+    )
+    monkeypatch.setattr("views.app_view_window.load_app_settings", lambda: DEFAULT_SETTINGS.copy())
+    monkeypatch.setattr("views.app_view_window.CameraDataManager", lambda: manager)
+    monkeypatch.setattr(confirm_dialog, "confirm", lambda *args, **kwargs: True)
+
+    window = MainWindow()
+
+    assert window.map_canvas.background_item is not None
+    assert window.map_canvas.grid_size == 32
+
+    layout = manager.get_layout("default")
+    assert layout is not None
+    layout.grid_size = 12
+    manager.update_layout(layout)
+    window.apply_layout_to_canvas(layout)
+
+    assert window.map_canvas.grid_size == 12
+    window.close()
+    app.processEvents()
+    manager.db.close()
+
+
+def test_main_window_undo_redo_drawing_snapshot(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    manager.db.execute(
+        "INSERT OR IGNORE INTO map_layouts (id, name, background_path) VALUES (?, ?, ?)",
+        ("default", "Default Layout", ""),
+    )
+    monkeypatch.setattr("views.app_view_window.load_app_settings", lambda: DEFAULT_SETTINGS.copy())
+    monkeypatch.setattr("views.app_view_window.CameraDataManager", lambda: manager)
+    monkeypatch.setattr(confirm_dialog, "confirm", lambda *args, **kwargs: True)
+    window = MainWindow()
+
+    window.map_canvas.add_drawing_shape(DrawingShape("shape_history", "Line", [0.0, 0.0, 20.0, 20.0]), emit_created=True)
+    app.processEvents()
+
+    assert [shape.id for shape in manager.get_drawing_shapes("default")] == ["shape_history"]
+    assert window.undo_action.isEnabled()
+
+    window.undo_last_action()
+    app.processEvents()
+
+    assert manager.get_drawing_shapes("default") == []
+    assert window.redo_action.isEnabled()
+
+    window.redo_last_action()
+    app.processEvents()
+
+    assert [shape.id for shape in manager.get_drawing_shapes("default")] == ["shape_history"]
+    window.close()
+    app.processEvents()
+    manager.db.close()

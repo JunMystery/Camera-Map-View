@@ -18,3 +18,5 @@ class DrawingShape:
     display_name: str = ""
     object_locked: bool = False
     z_index: int = 0
+    fill_color: str = ""
+    object_visible: bool = True

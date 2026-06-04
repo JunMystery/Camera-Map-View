@@ -49,12 +49,16 @@ class CameraPropertiesDialog(QDialog):
         self.linked_device_ids = set(linked_device_ids or [])
         self.checked_link_ids = set(self.linked_device_ids)
         self.incoming_device_ids = set(incoming_device_ids or [])
+        self.removed_incoming_device_ids: set[str] = set()
 
         self.setModal(True)
         self.resize(540, 560)
 
         self.name_input = QLineEdit(camera.name, self)
         self.name_input.textChanged.connect(self._update_save_state)
+        self.badge_input = QLineEdit(camera.badge_text[:3].upper(), self)
+        self.badge_input.setMaxLength(3)
+        self.badge_input.textChanged.connect(self._normalize_badge_text)
         self.ip_input = QLineEdit(camera.ip_address, self)
         self.ip_input.setValidator(self._ip_validator())
         self.ip_input.textChanged.connect(self._update_save_state)
@@ -103,6 +107,7 @@ class CameraPropertiesDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
 
         self.name_label = QLabel(self)
+        self.badge_label = QLabel(self)
         self.ip_label = QLabel(self)
         self.port_label = QLabel(self)
         self.type_label = QLabel(self)
@@ -150,12 +155,15 @@ class CameraPropertiesDialog(QDialog):
             fov_degrees=int(self.fov_input.currentData() or self.camera.fov_degrees or 80),
             object_locked=self.camera.object_locked,
             z_index=self.camera.z_index,
+            object_visible=self.camera.object_visible,
+            badge_text=self.badge_input.text().strip().upper()[:3],
         )
 
     def _build_layout(self) -> None:
         form = QFormLayout()
         form.setVerticalSpacing(10)
         form.addRow(self.name_label, self.name_input)
+        form.addRow(self.badge_label, self.badge_input)
         form.addRow(self.kind_label, self.kind_input)
         form.addRow(self.ip_label, self.ip_input)
         form.addRow(self.port_label, self.port_input)
@@ -196,6 +204,12 @@ class CameraPropertiesDialog(QDialog):
         remaining_ids = sorted(self.checked_link_ids.difference(ordered_ids))
         return [*ordered_ids, *remaining_ids]
 
+    def get_removed_incoming_device_ids(self) -> list[str]:
+        """Return incoming source ids that were unchecked in the connection dialog."""
+        ordered_ids = [device.id for device in self.available_devices if device.id in self.removed_incoming_device_ids]
+        remaining_ids = sorted(self.removed_incoming_device_ids.difference(ordered_ids))
+        return [*ordered_ids, *remaining_ids]
+
     def manage_connections(self) -> None:
         """Open the dedicated connection editor."""
         current_device = replace(
@@ -214,6 +228,8 @@ class CameraPropertiesDialog(QDialog):
         )
         if dialog.exec() == dialog.DialogCode.Accepted:
             self.checked_link_ids = set(dialog.get_linked_device_ids())
+            self.removed_incoming_device_ids = set(dialog.get_removed_incoming_device_ids())
+            self.incoming_device_ids.difference_update(self.removed_incoming_device_ids)
 
     def upload_location_image(self) -> None:
         """Select a source image and preview it before saving."""
@@ -284,6 +300,7 @@ class CameraPropertiesDialog(QDialog):
         """Refresh dialog text for the active language."""
         self.setWindowTitle(t("device_dialog.title"))
         self.name_label.setText(t("device_dialog.name"))
+        self.badge_label.setText(t("device_dialog.badge"))
         self.kind_label.setText(t("device_dialog.kind"))
         self.ip_label.setText(t("camera_dialog.ip"))
         self.port_label.setText(t("camera_dialog.port"))
@@ -345,6 +362,13 @@ class CameraPropertiesDialog(QDialog):
             self.ip_input.setText("192.168.1.1")
             self.ping_input.setChecked(True)
         self._update_save_state()
+
+    def _normalize_badge_text(self, value: str) -> None:
+        normalized = value.strip().upper()[:3]
+        if value != normalized:
+            self.badge_input.blockSignals(True)
+            self.badge_input.setText(normalized)
+            self.badge_input.blockSignals(False)
 
     def _populate_fov_values(self) -> None:
         current_value = int(self.fov_input.currentData() or self.camera.fov_degrees or 80)

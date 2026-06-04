@@ -13,3 +13,5 @@ class CanvasLayer:
     position: int
     visible: bool = True
     locked: bool = False
+    group_id: str = ""
+    is_group: bool = False

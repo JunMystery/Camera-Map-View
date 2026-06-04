@@ -17,6 +17,8 @@ class LayerState:
     locked: bool
     item_count: int
     active: bool = False
+    group_id: str = ""
+    is_group: bool = False
 
 
 @dataclass

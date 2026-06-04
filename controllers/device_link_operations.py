@@ -15,6 +15,8 @@ class DeviceLinkOperations:
             return False
         if not self._device_in_layout(source_device_id, layout_id) or not self._device_in_layout(target_device_id, layout_id):
             return False
+        if self._would_create_cycle(source_device_id, target_device_id, layout_id):
+            return False
         try:
             self.db.execute(
                 """
@@ -82,6 +84,27 @@ class DeviceLinkOperations:
             (layout_id, source_device_id, target_device_id),
         )
         return cursor.rowcount > 0
+
+    def _would_create_cycle(self, source_device_id: str, target_device_id: str, layout_id: str) -> bool:
+        """Return whether adding source -> target would make a topology cycle."""
+        visited: set[str] = set()
+        pending = [target_device_id]
+        while pending:
+            current = pending.pop()
+            if current == source_device_id:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            rows = self.db.fetch_all(
+                """
+                SELECT target_device_id FROM device_links
+                WHERE layout_id = ? AND source_device_id = ?
+                """,
+                (layout_id, current),
+            )
+            pending.extend(str(row["target_device_id"]) for row in rows)
+        return False
 
     def delete_device_links_for_device(self, device_id: str, layout_id: str | None = None) -> None:
         """Remove links touching a deleted device."""

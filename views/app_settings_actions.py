@@ -42,8 +42,6 @@ class AppSettingsActions:
         """Add menu actions that reopen dock widgets after users close them."""
         self.view_menu.addSeparator()
         self.view_menu.addAction(self.dock.toggleViewAction())
-        self.drawing_tools_view_action = self.view_menu.addAction(t("dock.drawing_tools"))
-        self.drawing_tools_view_action.triggered.connect(self._show_drawing_tools_panel)
         self.view_menu.addAction(self.layers_dock.toggleViewAction())
 
     def _show_drawing_tools_panel(self) -> None:

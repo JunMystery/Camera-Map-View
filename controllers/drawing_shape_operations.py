@@ -17,9 +17,9 @@ class DrawingShapeOperations:
                 """
                 INSERT INTO drawing_shapes (
                     id, layout_id, shape_type, points, color, line_thickness, label, image_path,
-                    layer_id, display_name, object_locked, z_index
+                    layer_id, display_name, object_locked, z_index, fill_color, object_visible
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     shape.id,
@@ -34,6 +34,8 @@ class DrawingShapeOperations:
                     shape.display_name,
                     int(shape.object_locked),
                     int(shape.z_index),
+                    shape.fill_color,
+                    int(shape.object_visible),
                 ),
             )
             return True
@@ -51,7 +53,8 @@ class DrawingShapeOperations:
             """
             UPDATE drawing_shapes
             SET points = ?, color = ?, line_thickness = ?, label = ?, image_path = ?,
-                layer_id = ?, display_name = ?, object_locked = ?, z_index = ?
+                layer_id = ?, display_name = ?, object_locked = ?, z_index = ?, fill_color = ?,
+                object_visible = ?
             WHERE id = ? AND layout_id = ?
             """,
             (
@@ -64,6 +67,8 @@ class DrawingShapeOperations:
                 shape.display_name,
                 int(shape.object_locked),
                 int(shape.z_index),
+                shape.fill_color,
+                int(shape.object_visible),
                 shape.id,
                 layout_id,
             ),
@@ -116,4 +121,6 @@ class DrawingShapeOperations:
             display_name=row["display_name"] or "",
             object_locked=bool(row["object_locked"]),
             z_index=int(row["z_index"] or 0),
+            fill_color=row["fill_color"] or "",
+            object_visible=bool(row["object_visible"]),
         )
