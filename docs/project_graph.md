@@ -128,6 +128,7 @@ MainWindow.__init__()
 |   +-- init_drawing_tools_dock()
 |       +-- fixed floating DrawingToolsPanel
 +-- CameraDataManager
++-- CanvasHistoryManager
 +-- load first layout or show blank canvas
 +-- init_layouts_dock()
 |   +-- no-op; layouts live in ControlLayoutPanel
@@ -150,11 +151,12 @@ File
 +-- unload_map_action -> confirm -> unload_background_image()
 +-- import_package_action -> import_map_package_file()
 +-- export_package_action -> export_current_map_package()
++-- export_snapshot_action -> export_canvas_snapshot()
 +-- exit_action -> close() -> confirm -> stop PingService
 
 Action
-+-- undo_action -> MapCanvas.undo() when available
-+-- redo_action -> MapCanvas.redo() when available
++-- undo_action -> CanvasHistoryManager.undo()
++-- redo_action -> CanvasHistoryManager.redo()
 
 View
 +-- zoom_in_action -> MapCanvas.scale(1.25)
@@ -162,7 +164,6 @@ View
 +-- zoom_fit_action -> MapCanvas.fit_in_view()
 +-- grid_action -> MapCanvas.set_grid_visible()
 +-- control dock toggle
-+-- drawing tools reopen
 +-- layers dock toggle
 
 Language
@@ -241,6 +242,15 @@ ControlLayoutPanel
 +-- Delete device -> CameraDataManager.delete_camera_in_layout()
 +-- Import CSV -> CameraDataManager.import_cameras_csv(layout_id)
 +-- Export CSV -> CameraDataManager.export_cameras_csv(layout_id)
++-- Drag selected device rows onto device row
+|   +-- preflight self/duplicate/cycle/descendant
+|   +-- CameraPlacementController.add_device_link(source, target)
+|   +-- refresh MapCanvas links and ControlLayoutPanel tree
++-- Drag selected linked rows to blank tree space or context Ungroup
+|   +-- CameraPlacementController.unlink_devices_from_group(source_ids)
+|   +-- delete outgoing parent links for selected sources
+|   +-- preserve downstream child links
+|   +-- refresh MapCanvas links and ControlLayoutPanel tree
 +-- Drag device row -> MapCanvas.dropEvent()
     +-- CameraPlacementController.handle_camera_dropped()
         +-- assign active layer
@@ -267,7 +277,7 @@ Placed device edit flow:
 CameraItem
 +-- moved -> MapCanvas.camera_moved -> CameraPlacementController.update_camera_position()
 +-- rotated by handle -> MapCanvas.camera_rotated -> CameraDataManager.update_camera_rotation_in_layout()
-+-- resized by handle -> MapCanvas.camera_resized -> CameraDataManager.update_camera_scale_in_layout()
++-- resized by near-body handle -> MapCanvas.camera_resized -> CameraDataManager.update_camera_scale_in_layout()
 +-- deleted/unbound -> MapCanvas.camera_deleted -> CameraPlacementController.unplace_camera()
 +-- link mode click -> MapCanvas.device_link_created -> CameraPlacementController.add_device_link()
 +-- selection changed -> MapCanvas.refresh_device_links()
@@ -280,7 +290,8 @@ ControlLayoutPanel.set_cameras(cameras, placed_ids, device_links)
 +-- filter by placed/unplaced tab
 +-- filter by search text
 +-- filter by status dropdown
-+-- build incoming map from source -> target links
++-- build incoming/outgoing maps from source -> target links
++-- keep ancestor paths and matching subtrees for search context
 +-- roots = linked devices without outgoing upstream target
 +-- add root device tree items
 +-- recursively add downstream children
@@ -302,14 +313,17 @@ DrawingToolsPanel
 +-- pan_action -> MainWindow.set_canvas_mode(PAN)
 +-- select_action -> MainWindow.set_canvas_mode(SELECT)
 +-- draw_line_action -> MainWindow.set_canvas_mode(LINE)
-+-- draw_rectangle_action -> MainWindow.set_canvas_mode(RECTANGLE)
-+-- draw_zone_action -> MainWindow.set_canvas_mode(ZONE)
 +-- draw_freehand_action -> MainWindow.set_canvas_mode(FREEHAND)
++-- Shapes menu
+|   +-- draw_rectangle_action -> MainWindow.set_canvas_mode(RECTANGLE)
+|   +-- draw_rounded_rectangle_action -> MainWindow.set_canvas_mode(ROUNDED_RECTANGLE)
+|   +-- draw_ellipse_action -> MainWindow.set_canvas_mode(ELLIPSE)
+|   +-- draw_triangle_action -> MainWindow.set_canvas_mode(TRIANGLE)
+|   +-- draw_zone_action -> MainWindow.set_canvas_mode(ZONE)
 +-- add_text_action -> add/edit TextAnnotationDialog
-+-- insert_png_action -> import_png_asset() -> MapCanvas.add_image_annotation()
++-- insert_png_action -> import_image_asset() -> MapCanvas.add_image_annotation()
 +-- choose_color_action -> QColorDialog
 +-- delete_selected_action -> MapCanvas.delete_selected_drawings()
-+-- rotate_camera_action -> MapCanvas.rotate_selected_cameras(15)
 +-- link_device_action -> MapCanvas.set_drawing_mode(LINK)
 +-- grid_action -> MapCanvas.set_grid_visible()
 +-- info actions -> MapCanvas.set_camera_info_visibility()
@@ -328,6 +342,8 @@ SELECT
 +-- restore item interaction flags
 +-- allow device/drawing select and move
 +-- allow camera rotate and resize handles
++-- allow device resize handle for every device kind
++-- allow device markers to move outside sceneRect for edge placement
 +-- allow right-click unlink on visible DeviceLinkItem
 
 LINK
@@ -340,6 +356,8 @@ Drawing modes
 +-- use cross cursor
 +-- create DrawingShape previews
 +-- persist final shape through drawing_created signal
++-- freeform coordinates by default
++-- hold Ctrl to snap draw/move/resize to grid
 ```
 
 Canvas zoom and pan:
@@ -392,19 +410,23 @@ upstream_path_links(source_id)
 MapCanvas
 +-- background item
 |   +-- QGraphicsPixmapItem
++-- canvas bounds item
+|   +-- QGraphicsRectItem independent from grid visibility
 +-- grid items
-|   +-- QGraphicsLineItem and border rect
+|   +-- QGraphicsLineItem
 +-- device items
 |   +-- CameraItem
 +-- temporary device link overlay items
 |   +-- DeviceLinkItem
 +-- drawing items
     +-- SelectableLineItem
-    +-- SelectableRectItem
-    +-- SelectablePolygonItem
+    +-- TransformableRectItem
+    +-- TransformableRoundedRectItem
+    +-- TransformableEllipseItem
+    +-- TransformablePolygonItem
     +-- SelectablePathItem
-    +-- QGraphicsTextItem
-    +-- QGraphicsPixmapItem
+    +-- TransformableTextItem
+    +-- TransformableImageItem
 ```
 
 Layer state flow:
@@ -439,7 +461,7 @@ LayersPanel
 +-- delete layer/object -> canvas delete + manager delete
 +-- move layer up/down -> CameraDataManager.move_layer() -> MapCanvas.set_canvas_layers()
 +-- move object up/down -> MapCanvas.move_layer_object() -> object_z_changed
-+-- visibility checkbox -> MapCanvas.set_layer_visible() + CameraDataManager.set_layer_visible()
++-- visibility icon button -> MapCanvas.set_layer_visible() + CameraDataManager.set_layer_visible()
 +-- layer lock -> MapCanvas.set_layer_locked() + CameraDataManager.set_layer_locked()
 +-- object lock -> MapCanvas.set_layer_object_locked() -> object_locked_changed
 +-- object row rename -> MapCanvas.rename_layer_object() -> object_renamed
@@ -508,10 +530,41 @@ Image annotation flow:
 ```text
 MainWindow.insert_png_annotation()
 +-- QFileDialog
-+-- import_png_asset()
-    +-- copy/downscale PNG into assets/maps/
++-- import_image_asset()
+    +-- copy/downscale supported image into assets/maps/
+    +-- max height 1440px, preserve ratio
+    +-- fit display size inside scene only when larger than canvas
     +-- MapCanvas.add_image_annotation()
     +-- drawing_created(shape)
+```
+
+Text/Image transform flow:
+
+```text
+SELECT mode
++-- selected TransformableTextItem
+|   +-- resize handle -> update font size in line_thickness
+|   +-- rotate handle -> persist points [x, y, rotation]
++-- selected TransformableImageItem
+    +-- resize handle -> persist points [x, y, width, height, rotation]
+    +-- rotate handle -> persist points [x, y, width, height, rotation]
++-- Esc -> rollback active transform
+    +-- release -> drawing_updated(shape)
+```
+
+Shape transform flow:
+
+```text
+SELECT mode
++-- selected TransformableRectItem / Rounded / Ellipse / Polygon
+    +-- side handles resize one axis
+    +-- corner handles resize two axes
+    +-- rotate handle stores rotation or baked scene points
++-- selected TransformableImageItem
+    +-- side handles resize one axis
+    +-- corner handles keep image aspect ratio
+    +-- rotation uses scene-space center to avoid visual flicker
++-- hold Ctrl during transform -> snap handle target to grid
 ```
 
 ## Package Export/Import Flow
@@ -530,9 +583,24 @@ Export diagram
     +-- services.map_package_service.export_map_package()
         +-- create .cmvmap ZIP
         +-- add background asset when present
-        +-- add PNG annotation assets when present
+        +-- add image annotation assets when present
         +-- add camera location photos when present
         +-- write manifest.json
+```
+
+## Snapshot Export Flow
+
+```text
+Export snapshot
++-- MainWindow.export_canvas_snapshot()
+    +-- QFileDialog save PNG/JPEG
+    +-- MapCanvas.export_snapshot(path)
+        +-- save selected items
+        +-- clear selection and handles
+        +-- QGraphicsScene.render(full sceneRect)
+        +-- restore selection/link overlays
+        +-- hidden layers/objects stay hidden in output
+        +-- device portions outside sceneRect are cropped from output
 ```
 
 ```text

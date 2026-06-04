@@ -17,6 +17,7 @@
     <string key="action.settings">Cài đặt</string>
     <string key="action.import_package">Nhập sơ đồ...</string>
     <string key="action.export_package">Xuất sơ đồ...</string>
+    <string key="action.export_snapshot">Xuất ảnh snapshot...</string>
     <string key="action.undo">Hoàn tác</string>
     <string key="action.redo">Làm lại</string>
     <string key="action.zoom_in">Phóng to</string>
@@ -26,14 +27,21 @@
     <string key="action.pan">Di chuyển bản đồ</string>
     <string key="action.draw_line">Vẽ đường</string>
     <string key="action.draw_rectangle">Vẽ khung</string>
+    <string key="action.draw_rounded_rectangle">Vẽ khung bo góc</string>
+    <string key="action.draw_ellipse">Vẽ ellipse</string>
+    <string key="action.draw_triangle">Vẽ tam giác</string>
     <string key="action.draw_zone">Vẽ vùng</string>
     <string key="action.draw_freehand">Vẽ tự do</string>
+    <string key="action.shapes">Hình</string>
     <string key="action.add_text">Thêm chữ</string>
-    <string key="action.insert_png">Chèn PNG</string>
+    <string key="action.insert_png">Chèn hình ảnh</string>
     <string key="action.choose_color">Chọn màu</string>
+    <string key="action.choose_fill_color">Chọn màu tô</string>
+    <string key="action.no_fill">Không tô</string>
     <string key="action.delete_selected">Xóa đã chọn</string>
     <string key="action.rotate_camera">Xoay camera</string>
     <string key="action.toggle_grid">Ẩn/Hiện lưới</string>
+    <string key="action.toggle_background_map">Ẩn/Hiện bản đồ nền</string>
     <string key="action.show_name">Tên</string>
     <string key="action.show_zone">Vùng</string>
     <string key="action.show_ip">IP</string>
@@ -58,6 +66,8 @@
     <string key="layer.name">Tên</string>
     <string key="layer.count">Số lượng</string>
     <string key="layer.add">Thêm layer</string>
+    <string key="layer.group">Nhóm</string>
+    <string key="layer.group_add">Thêm nhóm layer</string>
     <string key="layer.new">Layer</string>
     <string key="layer.select">Chọn</string>
     <string key="layer.expand">Mở layer</string>
@@ -65,6 +75,8 @@
     <string key="layer.delete">Xóa</string>
     <string key="layer.up">Lên</string>
     <string key="layer.down">Xuống</string>
+    <string key="layer.bring_forward">Đưa lên trước</string>
+    <string key="layer.send_backward">Đưa ra sau</string>
     <string key="layer.move_selected">Chuyển vào layer</string>
     <string key="layer.delete_confirm">Layer này có đối tượng. Xóa layer sẽ xóa luôn các đối tượng bên trong. Tiếp tục?</string>
     <string key="layout.add">Thêm</string>
@@ -75,9 +87,9 @@
     <string key="layout.edit_title">Chỉnh sửa sơ đồ</string>
     <string key="layout.name">Tên sơ đồ</string>
     <string key="dialog.choose_map.title">Chọn ảnh sơ đồ mặt bằng</string>
-    <string key="dialog.choose_map.filter">Hình ảnh (*.png *.jpg *.jpeg *.bmp)</string>
-    <string key="dialog.choose_png.title">Chọn ảnh PNG</string>
-    <string key="dialog.choose_png.filter">PNG (*.png)</string>
+    <string key="dialog.choose_map.filter">Hình ảnh (*.png *.jpg *.jpeg *.bmp *.webp);;Tất cả tệp (*.*)</string>
+    <string key="dialog.choose_png.title">Chọn hình ảnh</string>
+    <string key="dialog.choose_png.filter">Hình ảnh (*.png *.jpg *.jpeg *.bmp *.webp);;Tất cả tệp (*.*)</string>
     <string key="dialog.choose_location_image.title">Chọn ảnh vị trí camera</string>
     <string key="dialog.image.filter">Hình ảnh (*.png *.jpg *.jpeg *.bmp *.webp);;Tất cả tệp (*.*)</string>
     <string key="dialog.choose_csv.title">Chọn file CSV thiết bị</string>
@@ -86,6 +98,8 @@
     <string key="dialog.choose_package.title">Chọn file sơ đồ</string>
     <string key="dialog.save_package.title">Lưu file sơ đồ</string>
     <string key="dialog.package.filter">Camera Map (*.cmvmap)</string>
+    <string key="dialog.save_snapshot.title">Xuất ảnh snapshot</string>
+    <string key="dialog.save_snapshot.filter">Ảnh PNG (*.png);;Ảnh JPEG (*.jpg *.jpeg)</string>
     <string key="settings.title">Cài đặt</string>
     <string key="settings.network">Mạng</string>
     <string key="settings.canvas">Canvas</string>
@@ -107,6 +121,7 @@
     <string key="dialog.add_text.color">Màu sắc</string>
     <string key="dialog.edit_text.title">Sửa chữ</string>
     <string key="dialog.choose_color.title">Chọn màu vẽ</string>
+    <string key="dialog.choose_fill_color.title">Chọn màu tô</string>
     <string key="dialog.confirm_unload_map.title">Gỡ bản đồ nền?</string>
     <string key="dialog.confirm_unload_map.body">Bản đồ nền hiện tại sẽ bị gỡ khỏi canvas. Tiếp tục?</string>
     <string key="dialog.confirm_exit.title">Thoát ứng dụng?</string>
@@ -117,6 +132,7 @@
     <string key="error.load_file.body">Không thể tải tệp hình ảnh được chọn hoặc tệp hình ảnh không hợp lệ.</string>
     <string key="error.package.title">Lỗi file sơ đồ</string>
     <string key="error.package.body">Không thể nhập hoặc xuất file sơ đồ đã chọn.</string>
+    <string key="error.snapshot_failed">Không thể xuất ảnh snapshot canvas hiện tại.</string>
     <string key="error.location_image_invalid">Không thể đọc ảnh vị trí đã chọn.</string>
     <string key="error.location_image_missing.title">Không tìm thấy ảnh vị trí</string>
     <string key="error.location_image_missing.body">Ảnh vị trí của camera không tồn tại hoặc không thể mở.</string>
@@ -124,6 +140,7 @@
     <string key="status.map_unloaded">Đã gỡ bản đồ nền.</string>
     <string key="status.package_exported">Đã xuất file sơ đồ.</string>
     <string key="status.package_imported">Đã nhập file sơ đồ.</string>
+    <string key="status.snapshot_exported">Đã xuất ảnh snapshot: {filename}</string>
     <string key="camera_panel.title">Danh sách thiết bị chưa đặt</string>
     <string key="camera_panel.title_unplaced">Danh sách thiết bị chưa đặt</string>
     <string key="camera_panel.title_placed">Danh sách thiết bị đã đặt</string>
@@ -133,6 +150,7 @@
     <string key="camera_panel.add">Thêm</string>
     <string key="camera_panel.edit">Sửa</string>
     <string key="camera_panel.delete">Xóa</string>
+    <string key="camera_panel.ungroup">Bỏ nhóm</string>
     <string key="camera_panel.import">Nhập CSV</string>
     <string key="camera_panel.export">Xuất CSV</string>
     <string key="camera_panel.no_dvr">Chưa gán DVR</string>
@@ -199,7 +217,7 @@ Ghi chú: {notes}</string>
     <string key="status.active_ping_failed">Không thể mở ping tới {ip_address}.</string>
     <string key="status.undo_unavailable">Chưa có thao tác để hoàn tác.</string>
     <string key="status.redo_unavailable">Chưa có thao tác để làm lại.</string>
-    <string key="status.png_inserted">Đã chèn ảnh PNG.</string>
+    <string key="status.png_inserted">Đã chèn hình ảnh.</string>
     <string key="status.csv_imported">Đã nhập {count} camera từ CSV.</string>
     <string key="status.csv_exported">Đã xuất CSV camera.</string>
     <string key="status.layer_selected">Đã chọn {count} đối tượng trong layer.</string>
@@ -238,6 +256,7 @@ Ping: {ping}
 Ghi chú: {notes}</string>
     <string key="device_dialog.title">Thông số thiết bị</string>
     <string key="device_dialog.name">Tên thiết bị</string>
+    <string key="device_dialog.badge">Badge</string>
     <string key="device_dialog.kind">Loại thiết bị</string>
     <string key="device_dialog.variant">Variant</string>
     <string key="device_dialog.ping_enabled">Ping thiết bị</string>
@@ -298,6 +317,7 @@ Ghi chú: {notes}</string>
     <string key="status.device_link_skipped">Không thể tạo liên kết thiết bị.</string>
     <string key="status.device_link_removed">Đã gỡ kết nối thiết bị.</string>
     <string key="status.device_link_remove_failed">Không thể gỡ kết nối thiết bị.</string>
+    <string key="status.background_map_missing">Chưa tải bản đồ nền.</string>
     <string key="seed.cam_01.name">Cổng Chính (Main Gate)</string>
     <string key="seed.cam_01.notes">Góc nhìn bãi xe chính</string>
     <string key="seed.cam_02.name">Quầy Lễ Tân (Reception)</string>

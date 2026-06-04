@@ -27,6 +27,7 @@ class DeviceConnectionsDialog(QDialog):
         self.available_devices = [device for device in available_devices if device.id != current_device.id]
         self.checked_link_ids = set(linked_device_ids)
         self.incoming_device_ids = set(incoming_device_ids)
+        self.removed_incoming_ids: set[str] = set()
         self.resize(560, 520)
 
         self.search_input = QLineEdit(self)
@@ -40,6 +41,7 @@ class DeviceConnectionsDialog(QDialog):
         self.incoming_list = QListWidget(self)
         self.incoming_list.setAlternatingRowColors(True)
         self.incoming_list.setSortingEnabled(False)
+        self.incoming_list.itemChanged.connect(self._handle_incoming_item_changed)
         for list_widget in (self.outgoing_list, self.incoming_list):
             list_widget.setSpacing(2)
             list_widget.setStyleSheet(
@@ -70,6 +72,12 @@ class DeviceConnectionsDialog(QDialog):
         remaining_ids = sorted(self.checked_link_ids.difference(ordered_ids))
         return [*ordered_ids, *remaining_ids]
 
+    def get_removed_incoming_device_ids(self) -> list[str]:
+        """Return source ids whose incoming link should be removed."""
+        ordered_ids = [device.id for device in self.available_devices if device.id in self.removed_incoming_ids]
+        remaining_ids = sorted(self.removed_incoming_ids.difference(ordered_ids))
+        return [*ordered_ids, *remaining_ids]
+
     def retranslate(self) -> None:
         """Refresh translated strings."""
         self.setWindowTitle(t("device_connections.title", name=self.current_device.name))
@@ -95,6 +103,7 @@ class DeviceConnectionsDialog(QDialog):
 
     def _populate_links(self) -> None:
         self.outgoing_list.blockSignals(True)
+        self.incoming_list.blockSignals(True)
         self.outgoing_list.clear()
         self.incoming_list.clear()
         for device in self.available_devices:
@@ -110,9 +119,15 @@ class DeviceConnectionsDialog(QDialog):
                 incoming.setData(Qt.ItemDataRole.UserRole, device.id)
                 incoming.setData(LINK_SEARCH_ROLE, self._device_search_text(device, label))
                 incoming.setSizeHint(QSize(0, 34))
-                incoming.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                incoming.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                incoming.setCheckState(Qt.CheckState.Unchecked if device.id in self.removed_incoming_ids else Qt.CheckState.Checked)
                 self.incoming_list.addItem(incoming)
         self.outgoing_list.blockSignals(False)
+        self.incoming_list.blockSignals(False)
         self._filter_links()
 
     def _handle_link_item_changed(self, item: QListWidgetItem) -> None:
@@ -123,6 +138,15 @@ class DeviceConnectionsDialog(QDialog):
             self.checked_link_ids.add(device_id)
             return
         self.checked_link_ids.discard(device_id)
+
+    def _handle_incoming_item_changed(self, item: QListWidgetItem) -> None:
+        device_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if not device_id:
+            return
+        if item.checkState() == Qt.CheckState.Checked:
+            self.removed_incoming_ids.discard(device_id)
+            return
+        self.removed_incoming_ids.add(device_id)
 
     def _filter_links(self) -> None:
         query = self.search_input.text().strip().lower()

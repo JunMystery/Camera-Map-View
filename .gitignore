@@ -14,3 +14,11 @@ __pycache__
 .vscode
 assets/data/*.db
 assets/data/*.db.bak
+.pytest_tmp
+
+# AI Agent Coding Standards
+.instructions.md
+
+bin/
+.pytest_*/
+.continue/

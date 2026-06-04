@@ -22,6 +22,8 @@ DANGER = "#ef4444"
 WARNING = "#facc15"
 GRID_DARK = "#525252"
 GRID_LIGHT = "#64748b"
+CANVAS_BG_DARK = "#151515"
+CANVAS_BG_LIGHT = "#eef2f7"
 
 
 def app_stylesheet(light_theme: bool) -> str:

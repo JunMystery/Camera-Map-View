@@ -21,3 +21,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+"""
+ * Copyright (c) 2026 JunMystery. All rights reserved.
+ * Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+ * Commercial use is strictly prohibited without prior written permission.
+"""

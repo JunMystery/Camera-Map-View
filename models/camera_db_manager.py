@@ -69,6 +69,8 @@ class CameraDbManager:
                 fov_degrees INTEGER DEFAULT 80,
                 object_locked INTEGER DEFAULT 0,
                 z_index INTEGER DEFAULT 0,
+                object_visible INTEGER DEFAULT 1,
+                badge_text TEXT DEFAULT '',
                 is_placed INTEGER DEFAULT 0,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
             );
@@ -92,6 +94,8 @@ class CameraDbManager:
                 position INTEGER NOT NULL DEFAULT 0,
                 visible INTEGER DEFAULT 1,
                 locked INTEGER DEFAULT 0,
+                group_id TEXT DEFAULT '',
+                is_group INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
@@ -110,6 +114,8 @@ class CameraDbManager:
                 display_name TEXT DEFAULT '',
                 object_locked INTEGER DEFAULT 0,
                 z_index INTEGER DEFAULT 0,
+                fill_color TEXT DEFAULT '',
+                object_visible INTEGER DEFAULT 1,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
             );
 
@@ -148,6 +154,15 @@ class CameraDbManager:
                 "fov_degrees": "INTEGER DEFAULT 80",
                 "object_locked": "INTEGER DEFAULT 0",
                 "z_index": "INTEGER DEFAULT 0",
+                "object_visible": "INTEGER DEFAULT 1",
+                "badge_text": "TEXT DEFAULT ''",
+            },
+        )
+        self._add_missing_columns(
+            "canvas_layers",
+            {
+                "group_id": "TEXT DEFAULT ''",
+                "is_group": "INTEGER DEFAULT 0",
             },
         )
         self._add_missing_columns(
@@ -158,6 +173,8 @@ class CameraDbManager:
                 "display_name": "TEXT DEFAULT ''",
                 "object_locked": "INTEGER DEFAULT 0",
                 "z_index": "INTEGER DEFAULT 0",
+                "fill_color": "TEXT DEFAULT ''",
+                "object_visible": "INTEGER DEFAULT 1",
             },
         )
         self._add_missing_columns(

@@ -1,7 +1,7 @@
 """Floating icon panel for map drawing and display tools."""
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QFrame, QMenu, QToolButton, QVBoxLayout, QWidget
 
 from config.i18n import t
@@ -29,6 +29,8 @@ class DrawingToolsPanel(QWidget):
         self._buttons: list[QToolButton] = []
         self._collapsed = False
         self._icon_color = TEXT_ON_DARK
+        self._drawing_color = "#ef4444"
+        self._fill_color = ""
 
         self.root_layout = QVBoxLayout(self)
         self.root_layout.setContentsMargins(7, 7, 7, 7)
@@ -44,13 +46,22 @@ class DrawingToolsPanel(QWidget):
         content_layout.setSpacing(6)
         content_layout.addWidget(self._action_button(mode_actions[0]))
         content_layout.addWidget(self._action_button(mode_actions[1]))
-        content_layout.addWidget(self._menu_button("Draw", mode_actions[2:], "draw_line"))
+        content_layout.addWidget(self._menu_button("Draw", mode_actions[2:4], "draw_line"))
+        content_layout.addWidget(self._menu_button("Shapes", mode_actions[4:], "shapes"))
         content_layout.addWidget(self._separator())
         for action in edit_actions:
+            if action.objectName() == "clear_fill_color":
+                continue
+            if action.objectName() == "choose_fill_color":
+                clear_action = next((item for item in edit_actions if item.objectName() == "clear_fill_color"), None)
+                content_layout.addWidget(self._menu_button("Fill", [item for item in (action, clear_action) if item], "choose_fill_color"))
+                continue
             content_layout.addWidget(self._action_button(action))
         content_layout.addWidget(self._separator())
         content_layout.addWidget(self._action_button(view_actions[0], "grid"))
-        content_layout.addWidget(self._menu_button("Info", view_actions[1:], "info"))
+        if len(view_actions) > 1:
+            content_layout.addWidget(self._action_button(view_actions[1], "toggle_background"))
+        content_layout.addWidget(self._menu_button("Info", view_actions[2:], "info"))
         self.root_layout.addWidget(self.content)
 
         self.apply_theme(False)
@@ -68,6 +79,8 @@ class DrawingToolsPanel(QWidget):
             icon_key = button.property("icon_key")
             if icon_key:
                 button.setIcon(self._icon(str(icon_key)))
+                if str(icon_key) == "shapes" and not button.isChecked():
+                    button.setToolTip(t("action.shapes"))
 
     def toggle_collapsed(self) -> None:
         """Collapse or expand the floating tool panel."""
@@ -87,6 +100,20 @@ class DrawingToolsPanel(QWidget):
         self._icon_color = LIGHT_TEXT if light_theme else TEXT_ON_DARK
         self.setStyleSheet(drawing_tools_stylesheet(light_theme))
         self.retranslate()
+
+    def set_drawing_color(self, color: str) -> None:
+        """Refresh the color action icon to show the active drawing color."""
+        self._drawing_color = color
+        for button in self._buttons:
+            if button.property("icon_key") == "choose_color":
+                button.setIcon(self._icon("choose_color"))
+
+    def set_fill_color(self, color: str) -> None:
+        """Refresh the fill action icon to show the active fill color."""
+        self._fill_color = color
+        for button in self._buttons:
+            if button.property("icon_key") == "choose_fill_color":
+                button.setIcon(self._icon("choose_fill_color"))
 
     def _action_button(self, action: QAction, icon_key: str | None = None) -> QToolButton:
         button = self._base_button(icon_key or action.objectName())
@@ -144,4 +171,22 @@ class DrawingToolsPanel(QWidget):
             button.setToolTip(checked.text())
 
     def _icon(self, icon_key: str | None):
+        if icon_key == "choose_color":
+            return self._color_icon(self._drawing_color, slash=False)
+        if icon_key == "choose_fill_color":
+            return self._color_icon(self._fill_color, slash=not bool(self._fill_color))
         return tool_icon(icon_key or "grid", color=self._icon_color)
+
+    def _color_icon(self, color: str, slash: bool = False) -> QIcon:
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(self._icon_color), 2))
+        painter.setBrush(QBrush(QColor(color) if color else QColor(0, 0, 0, 0)))
+        painter.drawRect(7, 7, 18, 18)
+        if slash:
+            painter.setPen(QPen(QColor("#ef4444"), 3))
+            painter.drawLine(8, 24, 24, 8)
+        painter.end()
+        return QIcon(pixmap)

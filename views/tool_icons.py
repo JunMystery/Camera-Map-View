@@ -1,5 +1,6 @@
 """Small vector icons rendered with Qt for tool panels."""
 
+import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
@@ -7,8 +8,16 @@ from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QP
 
 from views.ui_theme import PRIMARY_SOFT, SUCCESS, TEXT_ON_DARK
 
-BUTTON_ICON_DIR = Path("assets/icons/buttons")
-DEVICE_ICON_DIR = Path("assets/icons/devices")
+# Get base directory - use sys._MEIPASS for PyInstaller bundle, else use script directory
+if getattr(sys, 'frozen', False):
+    # Running in PyInstaller bundle
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    # Running from source
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
+BUTTON_ICON_DIR = BASE_DIR / "assets" / "icons" / "buttons"
+DEVICE_ICON_DIR = BASE_DIR / "assets" / "icons" / "devices"
 
 BUTTON_ICON_FILES = {
     "add": "add.svg",
@@ -20,6 +29,12 @@ BUTTON_ICON_FILES = {
     "import": "import.svg",
     "export": "export.svg",
     "info": "info.svg",
+    "show": "show.svg",
+    "visible": "show.svg",
+    "eye": "show.svg",
+    "hide": "hide.svg",
+    "hidden": "hide.svg",
+    "eye_off": "hide.svg",
     "settings": "settings-edit.svg",
     "cog": "settings-edit.svg",
     "edit": "settings-edit.svg",
@@ -89,6 +104,16 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
         painter.drawLine(7, 24, 25, 8)
     elif name in {"draw_rectangle", "rectangle"}:
         painter.drawRect(QRectF(7, 8, 18, 16))
+    elif name in {"draw_rounded_rectangle", "rounded_rectangle"}:
+        painter.drawRoundedRect(QRectF(7, 8, 18, 16), 4, 4)
+    elif name in {"draw_ellipse", "ellipse", "circle"}:
+        painter.drawEllipse(QRectF(7, 8, 18, 16))
+    elif name in {"draw_triangle", "triangle"}:
+        painter.drawPolygon(QPolygonF([QPointF(16, 7), QPointF(26, 24), QPointF(6, 24)]))
+    elif name == "shapes":
+        painter.drawRect(QRectF(6, 15, 11, 10))
+        painter.drawEllipse(QRectF(16, 7, 10, 10))
+        painter.drawPolygon(QPolygonF([QPointF(22, 18), QPointF(28, 27), QPointF(16, 27)]))
     elif name in {"draw_zone", "zone"}:
         points = QPolygonF([QPointF(8, 20), QPointF(13, 8), QPointF(25, 11), QPointF(23, 24)])
         painter.drawPolygon(points)
@@ -109,11 +134,18 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
         painter.drawLine(14, 16, 18, 20)
         painter.drawLine(18, 20, 24, 13)
         painter.drawEllipse(QRectF(19, 10, 3, 3))
-    elif name in {"choose_color", "color"}:
+    elif name in {"choose_color", "color", "choose_fill_color"}:
         painter.setBrush(QColor(accent))
-        painter.drawEllipse(QRectF(7, 7, 18, 18))
-        painter.setBrush(QColor(SUCCESS))
-        painter.drawEllipse(QRectF(12, 12, 8, 8))
+        if name == "choose_fill_color":
+            painter.drawRect(QRectF(7, 7, 18, 18))
+        else:
+            painter.drawEllipse(QRectF(7, 7, 18, 18))
+            painter.setBrush(QColor(SUCCESS))
+            painter.drawEllipse(QRectF(12, 12, 8, 8))
+    elif name in {"clear_fill_color", "no_fill"}:
+        painter.drawRect(QRectF(7, 7, 18, 18))
+        painter.setPen(QPen(QColor("#ef4444"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(8, 24, 24, 8)
     elif name in {"delete_selected", "delete", "trash"}:
         painter.drawLine(10, 11, 23, 11)
         painter.drawLine(13, 8, 20, 8)
@@ -128,6 +160,11 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
         for value in (9, 16, 23):
             painter.drawLine(value, 6, value, 26)
             painter.drawLine(6, value, 26, value)
+    elif name in {"toggle_background", "background_map"}:
+        painter.drawRect(QRectF(6, 8, 20, 17))
+        painter.drawLine(8, 22, 13, 16)
+        painter.drawLine(13, 16, 17, 20)
+        painter.drawLine(17, 20, 25, 11)
     elif name in {"info", "show_name", "show_zone", "show_ip", "show_dvr"}:
         painter.drawEllipse(QRectF(8, 8, 16, 16))
         painter.drawLine(16, 15, 16, 22)
@@ -152,6 +189,13 @@ def tool_icon(name: str, color: str = TEXT_ON_DARK, accent: str = PRIMARY_SOFT) 
         painter.drawArc(QRectF(14, 7, 10, 12), 40 * 16, 150 * 16)
     elif name in {"add_layer", "add"}:
         painter.drawRect(QRectF(7, 9, 15, 16))
+        painter.drawLine(24, 18, 30, 18)
+        painter.drawLine(27, 15, 27, 21)
+    elif name in {"add_group", "layer_group"}:
+        painter.drawRect(QRectF(5, 11, 22, 15))
+        painter.drawLine(5, 11, 12, 11)
+        painter.drawLine(12, 11, 15, 8)
+        painter.drawLine(15, 8, 27, 8)
         painter.drawLine(24, 18, 30, 18)
         painter.drawLine(27, 15, 27, 21)
     elif name == "up":

@@ -35,9 +35,9 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                     id, layout_id, name, ip_address, port, camera_type,
                     pos_x, pos_y, rotation, display_scale, status, last_check, notes,
                     zone, dvr_origin, layer_id, location_image_path, device_kind,
-                    variant, ping_enabled, fov_degrees, object_locked, z_index, is_placed
+                    variant, ping_enabled, fov_degrees, object_locked, z_index, object_visible, badge_text, is_placed
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._camera_to_row_params(camera, layout_id, is_placed),
             )
@@ -102,7 +102,9 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                     ping_enabled = ?,
                     fov_degrees = ?,
                     object_locked = ?,
-                    z_index = ?
+                    z_index = ?,
+                    object_visible = ?,
+                    badge_text = ?
                 WHERE id = ?
                 """,
                 (
@@ -125,6 +127,8 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                     int(camera.fov_degrees),
                     int(camera.object_locked),
                     int(camera.z_index),
+                    int(camera.object_visible),
+                    camera.badge_text[:3].upper(),
                     camera.id,
                 ),
             )
@@ -346,6 +350,8 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
             int(camera.fov_degrees),
             int(camera.object_locked),
             int(camera.z_index),
+            int(camera.object_visible),
+            camera.badge_text[:3].upper(),
             int(is_placed),
         )
 
@@ -382,6 +388,8 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                 "fov_degrees": int(row["fov_degrees"] or 80),
                 "object_locked": bool(row["object_locked"]),
                 "z_index": int(row["z_index"] or 0),
+                "object_visible": bool(row["object_visible"]),
+                "badge_text": row["badge_text"] or "",
             }
         )
 

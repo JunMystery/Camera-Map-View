@@ -10,15 +10,23 @@ from models.device_link_model import DeviceLink
 from models.device_catalog import DEVICE_KIND_PC, DEVICE_KIND_SERVER, DEVICE_KIND_SWITCH
 from models.drawing_shape_model import DrawingShape
 from utils.geometry import snap_to_grid
-from utils.image_assets import CAMERA_PHOTO_MAX_EDGE, import_camera_location_image
+from utils.image_assets import CAMERA_PHOTO_MAX_EDGE, import_camera_location_image, import_image_asset
 from config.i18n import set_language
 from views.camera_location_image_dialog import CameraLocationImageDialog
+from views.camera_view_item import CameraItem
 from views.camera_view_dialog import CameraPropertiesDialog
 from views.device_connections_dialog import DeviceConnectionsDialog
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
-from views.map_drawing_tools import DrawingMode
+from views.map_drawing_tools import (
+    DrawingMode,
+    TransformableImageItem,
+    TransformablePolygonItem,
+    TransformableRectItem,
+    TransformableTextItem,
+)
 from views.map_view_canvas import MapCanvas
 from views.tool_icons import device_icon, tool_icon
+from views.ui_theme import CANVAS_BG_DARK, CANVAS_BG_LIGHT
 
 
 def test_snap_to_grid_rounds_to_nearest_intersection() -> None:
@@ -26,11 +34,27 @@ def test_snap_to_grid_rounds_to_nearest_intersection() -> None:
     assert snap_to_grid(31.0, 49.0, 20) == (40.0, 40.0)
 
 
-def test_canvas_snaps_camera_items_when_moved() -> None:
+def test_canvas_does_not_snap_camera_items_by_default() -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
     canvas.grid_size = 20
     item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    item.setPos(23.4, 47.9)
+
+    assert item.pos().x() == 23.4
+    assert item.pos().y() == 47.9
+    assert item.camera.position_x == 23.4
+    assert item.camera.position_y == 47.9
+    app.processEvents()
+
+
+def test_canvas_snaps_camera_items_when_ctrl_is_held(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.grid_size = 20
+    item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+    monkeypatch.setattr("views.map_canvas_actions.QApplication.keyboardModifiers", lambda: Qt.KeyboardModifier.ControlModifier)
 
     item.setPos(23.4, 47.9)
 
@@ -51,7 +75,7 @@ def test_canvas_creates_rectangle_shape_from_drawing_points() -> None:
 
     assert shape is not None
     assert shape.shape_type == "Rectangle"
-    assert shape.points == [0.0, 0.0, 40.0, 80.0]
+    assert shape.points == [0.0, 0.0, 41.0, 79.0, 0.0]
     app.processEvents()
 
 
@@ -61,6 +85,65 @@ def test_canvas_defaults_to_pan_mode() -> None:
 
     assert canvas.drawing_mode == DrawingMode.PAN
     assert canvas.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
+    app.processEvents()
+
+
+def test_canvas_snaps_drawing_points_only_when_ctrl_is_held(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.grid_size = 20
+    canvas.set_drawing_mode(DrawingMode.RECTANGLE)
+    monkeypatch.setattr("views.map_canvas_actions.QApplication.keyboardModifiers", lambda: Qt.KeyboardModifier.ControlModifier)
+
+    shape = canvas._shape_from_points(canvas.mapToScene(0, 0), canvas.mapToScene(41, 79))
+
+    assert shape is not None
+    assert shape.points == [0.0, 0.0, 40.0, 80.0, 0.0]
+    app.processEvents()
+
+
+def test_freehand_uses_real_points_unless_ctrl_is_held(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.grid_size = 20
+
+    shape = canvas.drawing_tool.freehand_shape([QPointF(1.0, 1.0), QPointF(21.0, 19.0)], "#ef4444")
+    assert shape is not None
+    assert shape.points == [1.0, 1.0, 21.0, 19.0]
+
+    monkeypatch.setattr("views.map_canvas_actions.QApplication.keyboardModifiers", lambda: Qt.KeyboardModifier.ControlModifier)
+    snapped = canvas.drawing_tool.freehand_shape([QPointF(1.0, 1.0), QPointF(21.0, 19.0)], "#ef4444")
+    assert snapped is not None
+    assert snapped.points == [0.0, 0.0, 20.0, 20.0]
+    app.processEvents()
+
+
+def test_canvas_creates_basic_shape_modes() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    modes = [
+        (DrawingMode.ROUNDED_RECTANGLE, "RoundedRectangle"),
+        (DrawingMode.ELLIPSE, "Ellipse"),
+        (DrawingMode.TRIANGLE, "Triangle"),
+    ]
+
+    for mode, shape_type in modes:
+        canvas.set_drawing_mode(mode)
+        shape = canvas._shape_from_points(QPointF(0, 0), QPointF(40, 30))
+        assert shape is not None
+        assert shape.shape_type == shape_type
+
+    app.processEvents()
+
+
+def test_select_mode_uses_rubber_band_drag() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+
+    assert canvas.dragMode() == QGraphicsView.DragMode.RubberBandDrag
+    assert canvas.rubberBandSelectionMode() == Qt.ItemSelectionMode.IntersectsItemShape
     app.processEvents()
 
 
@@ -95,7 +178,7 @@ def test_escape_cancels_camera_resize_and_rotation() -> None:
     assert not item.is_rotating
     assert item.camera.rotation == 20.0
 
-    item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(54, 54), QPointF(100, 100)))
+    item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(34, 28), QPointF(100, 100)))
     item._apply_resize_from_distance(200.0)
     assert item.scale() != 1.0
 
@@ -155,7 +238,7 @@ def test_canvas_drawing_mouse_events_create_shape() -> None:
 
     assert len(created) == 1
     assert created[0].shape_type == "Line"
-    assert created[0].points == [0.0, 0.0, 40.0, 80.0]
+    assert created[0].points == [0.0, 0.0, 41.0, 79.0]
     app.processEvents()
 
 
@@ -228,6 +311,8 @@ def test_canvas_device_links_follow_downstream_and_single_upstream_path() -> Non
     ]
     canvas.set_device_links(links)
 
+    assert canvas.device_link_items == []
+
     canvas.scene.clearSelection()
     canvas.camera_items["cam"].setSelected(True)
     assert {(item.link.source_device_id, item.link.target_device_id) for item in canvas.device_link_items} == {
@@ -245,6 +330,15 @@ def test_canvas_device_links_follow_downstream_and_single_upstream_path() -> Non
     }
 
     canvas.scene.clearSelection()
+    canvas.camera_items["switch"].setSelected(True)
+    assert {(item.link.source_device_id, item.link.target_device_id) for item in canvas.device_link_items} == {
+        ("cam", "ap"),
+        ("ap", "switch"),
+        ("pc", "switch"),
+        ("switch", "router"),
+    }
+
+    canvas.scene.clearSelection()
     canvas.camera_items["router"].setSelected(True)
     assert {(item.link.source_device_id, item.link.target_device_id) for item in canvas.device_link_items} == {
         ("cam", "ap"),
@@ -252,6 +346,47 @@ def test_canvas_device_links_follow_downstream_and_single_upstream_path() -> Non
         ("pc", "switch"),
         ("switch", "router"),
     }
+
+    canvas.scene.clearSelection()
+    canvas.camera_items["cam"].setSelected(True)
+    canvas.camera_items["pc"].setSelected(True)
+    assert canvas.device_link_items == []
+    app.processEvents()
+
+
+def test_camera_fov_fill_alpha_and_color_are_red() -> None:
+    item = CameraItem(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    default_fill = item._fov_fill_color(False)
+    selected_fill = item._fov_fill_color(True)
+    default_pen = item._fov_pen_color(False)
+    selected_pen = item._fov_pen_color(True)
+
+    assert default_fill.alpha() < selected_fill.alpha()
+    assert default_pen.alpha() < selected_pen.alpha()
+    for color in (default_fill, selected_fill):
+        assert color.red() > color.green()
+        assert color.red() > color.blue()
+        assert color.green() == color.blue()
+
+
+def test_camera_fov_is_not_in_hit_shape_and_non_camera_resize_only() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    camera_item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
+    server_item = canvas.add_camera_item(
+        Camera("server_test", "Server", "", device_kind=DEVICE_KIND_SERVER, ping_enabled=False)
+    )
+
+    camera_item.setSelected(True)
+    assert not camera_item.shape().contains(QPointF(120.0, 0.0))
+
+    server_item.setSelected(True)
+    server_item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(46, 0)))
+    assert not server_item.is_rotating
+    server_item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(34, 28), QPointF(100, 100)))
+    assert server_item.is_resizing
     app.processEvents()
 
 
@@ -346,6 +481,12 @@ def test_device_dialog_link_search_preserves_checked_and_shows_incoming() -> Non
     dialog.search_input.setText("server")
     dialog.search_input.clear()
     assert dialog.get_linked_device_ids() == ["server", "cam_a"]
+
+    for index in range(dialog.incoming_list.count()):
+        item = dialog.incoming_list.item(index)
+        if item.data(Qt.ItemDataRole.UserRole) == "cam_b":
+            item.setCheckState(Qt.CheckState.Unchecked)
+    assert dialog.get_removed_incoming_device_ids() == ["cam_b"]
     app.processEvents()
 
 
@@ -385,7 +526,7 @@ def test_import_camera_location_image_compresses_to_jpg(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "source.png"
     target_dir = tmp_path / "photos"
-    image = QImage(2400, 1200, QImage.Format.Format_ARGB32)
+    image = QImage(2400, 2000, QImage.Format.Format_ARGB32)
     image.fill(0xFFFFFFFF)
     assert image.save(str(source))
 
@@ -394,8 +535,46 @@ def test_import_camera_location_image_compresses_to_jpg(tmp_path) -> None:
     assert imported is not None
     path, width, height = imported
     assert path.endswith(".jpg")
-    assert max(width, height) == CAMERA_PHOTO_MAX_EDGE
-    assert QImage(path).width() == CAMERA_PHOTO_MAX_EDGE
+    assert height == CAMERA_PHOTO_MAX_EDGE
+    assert width == 1728
+    assert QImage(path).height() == CAMERA_PHOTO_MAX_EDGE
+    app.processEvents()
+
+
+def test_import_image_asset_accepts_jpg_and_caps_height(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "source.jpg"
+    target_dir = tmp_path / "assets"
+    image = QImage(2400, 2000, QImage.Format.Format_RGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(source), "JPG")
+
+    imported = import_image_asset(str(source), target_dir)
+
+    assert imported is not None
+    path, width, height = imported
+    assert path.endswith(".jpg")
+    assert width == 1728
+    assert height == 1440
+    assert QImage(path).height() == 1440
+    app.processEvents()
+
+
+def test_import_image_asset_keeps_smaller_image_size(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "source.bmp"
+    target_dir = tmp_path / "assets"
+    image = QImage(2400, 1200, QImage.Format.Format_RGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(source), "BMP")
+
+    imported = import_image_asset(str(source), target_dir)
+
+    assert imported is not None
+    path, width, height = imported
+    assert path.endswith(".bmp")
+    assert (width, height) == (2400, 1200)
+    assert QImage(path).height() == 1200
     app.processEvents()
 
 
@@ -459,7 +638,9 @@ def test_camera_item_resize_handle_updates_scale() -> None:
     item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
 
     item.setSelected(True)
-    assert item._is_on_resize_handle(QPointF(54, 54))
+    assert item._is_on_resize_handle(QPointF(34, 28))
+    assert item._is_on_resize_handle(QPointF(22, 16))
+    assert not item._is_on_resize_handle(QPointF(54, 54))
 
     item.resize_start_distance = 50.0
     item.resize_start_scale = 1.0
@@ -606,6 +787,278 @@ def test_canvas_draws_new_items_into_active_layer() -> None:
     app.processEvents()
 
 
+def test_canvas_grid_toggle_keeps_edit_area_boundary_visible() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+
+    assert canvas.canvas_bounds_item is not None
+    assert canvas.backgroundBrush().color().name() == CANVAS_BG_DARK
+    canvas.set_grid_visible(False)
+
+    assert all(not item.isVisible() for item in canvas.grid_items)
+    assert canvas.canvas_bounds_item is not None
+    assert canvas.canvas_bounds_item.isVisible()
+    dark_pen = canvas.canvas_bounds_item.pen().color().name()
+    canvas.set_light_theme(True)
+    light_pen = canvas.canvas_bounds_item.pen().color().name()
+    assert canvas.backgroundBrush().color().name() == CANVAS_BG_LIGHT
+    assert dark_pen != light_pen
+    app.processEvents()
+
+
+def test_canvas_insert_image_fits_large_image_inside_canvas(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(100, 100)
+    image_path = tmp_path / "large.png"
+    image = QImage(200, 50, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+
+    shape = canvas.add_image_annotation(str(image_path), 200, 50)
+
+    assert shape.points[2] == 100.0
+    assert shape.points[3] == 25.0
+    assert shape.points[0] >= 0
+    assert shape.points[0] + shape.points[2] <= 100
+    app.processEvents()
+
+
+def test_text_and_image_shapes_persist_rotation_points(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    image_path = tmp_path / "item.png"
+    image = QImage(40, 20, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+
+    text_item = canvas.add_drawing_shape(DrawingShape("text_rot", "Text", [1.0, 2.0, 33.0], label="Hello"))
+    image_item = canvas.add_drawing_shape(
+        DrawingShape("image_rot", "Image", [3.0, 4.0, 40.0, 20.0, 45.0], image_path=str(image_path))
+    )
+
+    assert isinstance(text_item, TransformableTextItem)
+    assert isinstance(image_item, TransformableImageItem)
+    assert text_item.rotation() == 33.0
+    assert image_item.rotation() == 45.0
+    assert canvas._drawing_shape_from_item(text_item).points == [1.0, 2.0, 33.0]
+    assert canvas._drawing_shape_from_item(image_item).points == [3.0, 4.0, 40.0, 20.0, 45.0]
+    app.processEvents()
+
+
+def test_shape_items_resize_and_persist_rotation_points() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    rect_item = canvas.add_drawing_shape(DrawingShape("rect_rot", "RoundedRectangle", [0.0, 0.0, 80.0, 40.0, 25.0]))
+    zone_item = canvas.add_drawing_shape(
+        DrawingShape("zone_resize", "Polygon", [0.0, 0.0, 80.0, 0.0, 80.0, 40.0, 0.0, 40.0])
+    )
+
+    assert isinstance(rect_item, TransformableRectItem)
+    assert isinstance(zone_item, TransformablePolygonItem)
+    assert rect_item.rotation() == 25.0
+    rect_item._set_content_rect(rect_item.rect().adjusted(0.0, 0.0, 20.0, 20.0))
+    zone_item.resize_start_rect = zone_item._content_rect()
+    zone_item.resize_start_polygon = zone_item.polygon()
+    zone_item._set_content_rect(zone_item._content_rect().adjusted(0.0, 0.0, 20.0, 20.0))
+
+    rect_shape = canvas._drawing_shape_from_item(rect_item)
+    zone_shape = canvas._drawing_shape_from_item(zone_item)
+
+    assert rect_shape.shape_type == "RoundedRectangle"
+    assert rect_shape.points == [0.0, 0.0, 100.0, 60.0, 25.0]
+    assert zone_shape.shape_type == "Polygon"
+    assert max(zone_shape.points) == 100.0
+    app.processEvents()
+
+
+def test_closed_shapes_render_and_persist_fill_color() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.set_drawing_fill_color("#00ff00")
+    canvas.set_drawing_mode(DrawingMode.RECTANGLE)
+
+    shape = canvas._shape_from_points(QPointF(0, 0), QPointF(40, 30))
+    assert shape is not None
+    assert shape.fill_color == "#00ff00"
+    item = canvas.add_drawing_shape(shape)
+    assert item is not None
+    assert item.brush().color().name() == "#00ff00"
+    assert canvas._drawing_shape_from_item(item).fill_color == "#00ff00"
+
+    canvas.clear_drawing_fill_color()
+    no_fill = canvas.drawing_tool.item_from_shape(DrawingShape("legacy", "Ellipse", [0, 0, 20, 20]))
+    assert no_fill is not None
+    assert no_fill.brush().style() == Qt.BrushStyle.NoBrush
+    app.processEvents()
+
+
+def test_canvas_selection_priority_uses_layer_and_object_z_order() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    lower_layer = canvas.canvas_layers[0]
+    upper_layer = CanvasLayer("layer_default_2", "default", "Layer 2", 1)
+    canvas.set_canvas_layers([lower_layer, upper_layer], "default")
+    lower = canvas.add_drawing_shape(
+        DrawingShape("lower", "Rectangle", [0.0, 0.0, 50.0, 50.0], layer_id=lower_layer.id, z_index=99)
+    )
+    lower_sibling = canvas.add_drawing_shape(
+        DrawingShape("lower_sibling", "Rectangle", [0.0, 0.0, 50.0, 50.0], layer_id=lower_layer.id, z_index=0)
+    )
+    upper = canvas.add_drawing_shape(
+        DrawingShape("upper", "Rectangle", [0.0, 0.0, 50.0, 50.0], layer_id=upper_layer.id, z_index=0)
+    )
+    assert lower is not None
+    assert lower_sibling is not None
+    assert upper is not None
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+
+    selected = canvas.top_selectable_item_at(canvas.mapFromScene(QPointF(1.0, 10.0)))
+
+    assert selected is upper
+    assert canvas.move_layer_object("drawing", "lower_sibling", 1)
+    assert int(lower_sibling.data(7) or 0) == 1
+    assert int(lower.data(7) or 0) == 0
+    app.processEvents()
+
+
+def test_canvas_object_visibility_hides_single_object_and_blocks_selection(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(80, 60)
+    visible_item = canvas.add_drawing_shape(DrawingShape("visible", "Line", [0.0, 0.0, 80.0, 60.0], color="#ffffff"))
+    hidden_item = canvas.add_drawing_shape(
+        DrawingShape("hidden", "Rectangle", [0.0, 0.0, 80.0, 60.0], fill_color="#ff0000")
+    )
+    assert visible_item is not None
+    assert hidden_item is not None
+
+    assert canvas.set_layer_object_visible("drawing", "hidden", False)
+
+    assert not hidden_item.isVisible()
+    assert visible_item.isVisible()
+    assert canvas.layer_visibility[canvas.active_layer_id] is True
+    assert canvas.select_layer_object("drawing", "hidden") is False
+    states = {state.object_id: state.visible for state in canvas.get_layer_object_states(canvas.active_layer_id)}
+    assert states["hidden"] is False
+    target = tmp_path / "object_visibility_snapshot.png"
+    assert canvas.export_snapshot(str(target))
+    exported = QImage(str(target))
+    assert exported.pixelColor(10, 10).name() != "#ff0000"
+    app.processEvents()
+
+
+def test_escape_cancels_text_and_image_transform(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    image_path = tmp_path / "item.png"
+    image = QImage(40, 20, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+    text_item = canvas.add_drawing_shape(DrawingShape("text_rot", "Text", [1.0, 2.0, 10.0], label="Hello"))
+    image_item = canvas.add_drawing_shape(
+        DrawingShape("image_size", "Image", [3.0, 4.0, 40.0, 20.0, 0.0], image_path=str(image_path))
+    )
+    assert isinstance(text_item, TransformableTextItem)
+    assert isinstance(image_item, TransformableImageItem)
+
+    text_item.is_rotating = True
+    text_item.rotation_start_value = 10.0
+    text_item.setRotation(80.0)
+    image_item.is_resizing = True
+    image_item.resize_start_size = (40.0, 20.0)
+    image_item._set_display_size(80.0, 40.0)
+
+    canvas.keyPressEvent(_KeyEvent(Qt.Key.Key_Escape))
+
+    assert text_item.rotation() == 10.0
+    assert not text_item.is_rotating
+    assert image_item.pixmap().width() == 40
+    assert image_item.pixmap().height() == 20
+    assert not image_item.is_resizing
+    app.processEvents()
+
+
+def test_rotated_image_resize_uses_stable_start_local_space(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    image_path = tmp_path / "rotated_image.png"
+    image = QImage(40, 20, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+    image_item = canvas.add_drawing_shape(
+        DrawingShape("image_rot_resize", "Image", [10.0, 10.0, 40.0, 20.0, 45.0], image_path=str(image_path))
+    )
+    assert isinstance(image_item, TransformableImageItem)
+    image_item.setSelected(True)
+    start_handle = image_item._resize_handle_rect("e").center()
+    start_scene = image_item.mapToScene(start_handle)
+    end_scene = image_item.mapToScene(QPointF(start_handle.x() + 30.0, start_handle.y()))
+
+    image_item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, start_handle, start_scene))
+    image_item.mouseMoveEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(start_handle.x() + 30.0, start_handle.y()), end_scene))
+    image_item.mouseReleaseEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(start_handle.x() + 30.0, start_handle.y()), end_scene))
+    shape = canvas._drawing_shape_from_item(image_item)
+
+    assert image_item.rotation() == 45.0
+    assert shape is not None
+    assert shape.points[2] > 40.0
+    assert shape.points[4] == 45.0
+    app.processEvents()
+
+
+def test_canvas_snapshot_exports_scene_without_hidden_layer_or_selection(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(120, 80)
+    visible_item = canvas.add_drawing_shape(DrawingShape("visible", "Line", [0.0, 0.0, 120.0, 80.0], color="#ffffff"))
+    hidden_layer = CanvasLayer("layer_default_2", "default", "Layer 2", 1)
+    canvas.set_canvas_layers([*canvas.canvas_layers, hidden_layer], "default")
+    hidden_image_path = tmp_path / "hidden.png"
+    hidden_image = QImage(120, 80, QImage.Format.Format_ARGB32)
+    hidden_image.fill(0xFFFF0000)
+    assert hidden_image.save(str(hidden_image_path))
+    hidden_item = canvas.add_drawing_shape(
+        DrawingShape("hidden", "Image", [0.0, 0.0, 120.0, 80.0], image_path=str(hidden_image_path), layer_id=hidden_layer.id)
+    )
+    assert visible_item is not None
+    assert hidden_item is not None
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    visible_item.setSelected(True)
+    canvas.set_layer_visible(hidden_layer.id, False)
+    target = tmp_path / "snapshot.png"
+
+    assert canvas.export_snapshot(str(target))
+    exported = QImage(str(target))
+
+    assert exported.width() == 120
+    assert exported.height() == 80
+    assert exported.pixelColor(10, 10).name() != "#ff0000"
+    assert visible_item.isSelected()
+    app.processEvents()
+
+
+def test_canvas_snapshot_excludes_ui_background_and_restores_bounds(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(24, 16)
+    canvas.set_grid_visible(False)
+    assert canvas.canvas_bounds_item is not None
+    assert canvas.canvas_bounds_item.isVisible()
+    target = tmp_path / "transparent_snapshot.png"
+
+    assert canvas.export_snapshot(str(target))
+    exported = QImage(str(target))
+
+    assert exported.pixelColor(4, 4).alpha() == 0
+    assert canvas.backgroundBrush().color().name() == CANVAS_BG_DARK
+    assert canvas.canvas_bounds_item is not None
+    assert canvas.canvas_bounds_item.isVisible()
+    app.processEvents()
+
+
 def test_canvas_settings_resize_grid_and_background_scale(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
@@ -622,6 +1075,7 @@ def test_canvas_settings_resize_grid_and_background_scale(tmp_path) -> None:
     image.fill(0xFFFFFFFF)
     assert image.save(str(image_path))
     assert canvas.load_background_image(str(image_path))
+    assert canvas.grid_size == 10
     canvas.set_background_scale(2.0)
 
     assert canvas.background_item is not None
