@@ -274,6 +274,10 @@ class MapCanvasActions:
         changed = self.active_layer_id != layer_id
         self.active_layer_id = layer_id
         if changed:
+            try:
+                self.active_layer_changed.emit(layer_id)
+            except Exception:
+                pass
             self._emit_layers_changed()
         return True
 
@@ -560,6 +564,11 @@ class MapCanvasActions:
         if not item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
             item.setFlags(item.flags() | item.GraphicsItemFlag.ItemIsSelectable)
         item.setSelected(True)
+        try:
+            # Notify UI panels about a programmatic object selection
+            self.layer_object_selected.emit(object_type, object_id)
+        except Exception:
+            pass
         return True
 
     def select_camera_item(self, camera_id: str, center: bool = True) -> bool:

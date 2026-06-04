@@ -95,6 +95,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     drawing_updated = pyqtSignal(object)
     drawing_deleted = pyqtSignal(str)
     layers_changed = pyqtSignal()
+    active_layer_changed = pyqtSignal(str)
+    layer_object_selected = pyqtSignal(str, str)
     history_step_started = pyqtSignal(str)
     history_step_finished = pyqtSignal(str)
 
@@ -415,6 +417,21 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     def _handle_selection_changed(self) -> None:
         if self._applying_topology_highlight:
             return
+        # Emit a concise selection signal for UI panels (last selected item)
+        selected_items = [item for item in self.scene.selectedItems() if item.data(1) in {"camera", "drawing"}]
+        if selected_items:
+            last = selected_items[-1]
+            if last.data(1) == "camera" and hasattr(last, "camera"):
+                obj_type = "camera"
+                obj_id = str(last.camera.id)
+            else:
+                obj_type = str(last.data(1) or "")
+                obj_id = str(last.data(0) or "")
+            try:
+                self.layer_object_selected.emit(obj_type, obj_id)
+            except Exception:
+                pass
+
         selected_id = self._selected_device_id()
         if selected_id:
             self._set_topology_focus(selected_id, center=False, select_item=False)
