@@ -45,7 +45,7 @@
     <string key="action.show_name">Name</string>
     <string key="action.show_zone">Zone</string>
     <string key="action.show_ip">IP</string>
-    <string key="action.show_dvr">Source DVR</string>
+    <string key="action.show_dvr">Parent IP</string>
     <string key="menu.file">File</string>
     <string key="menu.action">Action</string>
     <string key="menu.view">View</string>
@@ -122,6 +122,9 @@
     <string key="dialog.edit_text.title">Edit text</string>
     <string key="dialog.choose_color.title">Choose drawing color</string>
     <string key="dialog.choose_fill_color.title">Choose fill color</string>
+    <string key="dialog.parent_picker.title">Change parent device</string>
+    <string key="dialog.parent_picker.search">Search devices...</string>
+    <string key="dialog.parent_picker.empty">No available parent devices.</string>
     <string key="dialog.confirm_unload_map.title">Unload background map?</string>
     <string key="dialog.confirm_unload_map.body">The current background map will be removed from the canvas. Continue?</string>
     <string key="dialog.confirm_exit.title">Exit application?</string>
@@ -144,16 +147,17 @@
     <string key="camera_panel.title">Unplaced Devices</string>
     <string key="camera_panel.title_unplaced">Unplaced Devices</string>
     <string key="camera_panel.title_placed">Placed Devices</string>
-    <string key="camera_panel.search">Search devices by name, IP, DVR, zone...</string>
+    <string key="camera_panel.search">Search devices by name, IP, parent IP, zone...</string>
     <string key="camera_panel.unplaced">Unplaced</string>
     <string key="camera_panel.placed">Placed</string>
     <string key="camera_panel.add">Add</string>
     <string key="camera_panel.edit">Edit</string>
     <string key="camera_panel.delete">Delete</string>
+    <string key="camera_panel.change_parent">Change parent device...</string>
     <string key="camera_panel.ungroup">Ungroup</string>
     <string key="camera_panel.import">Import CSV</string>
     <string key="camera_panel.export">Export CSV</string>
-    <string key="camera_panel.no_dvr">No DVR</string>
+    <string key="camera_panel.no_dvr">No parent IP</string>
     <string key="camera_panel.online_group">Online</string>
     <string key="camera_panel.offline_group">Offline</string>
     <string key="camera_panel.item">📹 {name}
@@ -166,7 +170,7 @@
     <string key="camera.tooltip">Name: {name}
 Zone: {zone}
 IP: {ip_address}:{port}
-Source DVR: {dvr_origin}
+Parent IP: {parent_ip}
 Type: {camera_type}
 Rotation: {rotation}°
 Status: {status}
@@ -186,7 +190,7 @@ Notes: {notes}</string>
     <string key="camera_dialog.type">Camera type</string>
     <string key="camera_dialog.fov">FOV</string>
     <string key="camera_dialog.zone">Zone</string>
-    <string key="camera_dialog.dvr_origin">Source DVR</string>
+    <string key="camera_dialog.dvr_origin">Parent IP</string>
     <string key="camera_dialog.rotation">Rotation</string>
     <string key="camera_dialog.status">Status</string>
     <string key="camera_dialog.notes">Notes</string>
@@ -239,7 +243,7 @@ Kind: {device_kind}
 Variant: {variant}
 IP: {ip_address}:{port}
 Zone: {zone}
-Source DVR: {dvr_origin}
+Parent IP: {parent_ip}
 Rotation: {rotation}
 FOV: {fov_degrees}
 Status: {status}
@@ -250,7 +254,7 @@ Kind: {device_kind}
 Variant: {variant}
 IP: {ip_address}:{port}
 Zone: {zone}
-Source DVR: {dvr_origin}
+Parent IP: {parent_ip}
 Status: {status}
 Ping: {ping}
 Notes: {notes}</string>
@@ -317,6 +321,7 @@ Notes: {notes}</string>
     <string key="status.device_link_skipped">Could not create device link.</string>
     <string key="status.device_link_removed">Removed device link.</string>
     <string key="status.device_link_remove_failed">Could not remove device link.</string>
+    <string key="status.device_parent_changed">Changed parent device.</string>
     <string key="status.background_map_missing">No background map is loaded.</string>
     <string key="seed.cam_01.name">Main Gate</string>
     <string key="seed.cam_01.notes">Main parking lot view</string>

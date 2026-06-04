@@ -1,5 +1,7 @@
 """Dialog for editing directed device topology links."""
 
+from collections.abc import Callable
+
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
@@ -20,6 +22,7 @@ class DeviceConnectionsDialog(QDialog):
         available_devices: list[Camera],
         linked_device_ids: set[str],
         incoming_device_ids: set[str],
+        parent_ip_lookup: Callable[[str], str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -28,6 +31,7 @@ class DeviceConnectionsDialog(QDialog):
         self.checked_link_ids = set(linked_device_ids)
         self.incoming_device_ids = set(incoming_device_ids)
         self.removed_incoming_ids: set[str] = set()
+        self.parent_ip_lookup = parent_ip_lookup or (lambda _device_id: "")
         self.resize(560, 520)
 
         self.search_input = QLineEdit(self)
@@ -168,7 +172,7 @@ class DeviceConnectionsDialog(QDialog):
                 label,
                 device.name,
                 device.ip_address,
-                device.dvr_origin,
+                self.parent_ip_lookup(device.id),
                 device.zone,
                 device.device_kind,
                 device.variant,

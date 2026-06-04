@@ -93,6 +93,9 @@ class DrawingToolsPanel(QWidget):
         self.collapse_button.setProperty("icon_key", "expand" if collapsed else "collapse")
         self.collapse_button.setIcon(self._icon("expand" if collapsed else "collapse"))
         self.adjustSize()
+        position_tools = getattr(self.parent(), "schedule_drawing_tools_position", None)
+        if callable(position_tools):
+            position_tools()
 
     def apply_theme(self, light_theme: bool) -> None:
         """Apply the shared application palette to the panel."""

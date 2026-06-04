@@ -2,6 +2,7 @@
 
 import os
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QColorDialog, QFileDialog, QMainWindow, QMessageBox, QStatusBar, QVBoxLayout, QWidget
 
@@ -155,6 +156,13 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.select_action.setCheckable(True)
         self.select_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.SELECT))
 
+        self.toggle_pan_select_action = QAction(self.map_canvas)
+        self.toggle_pan_select_action.setObjectName("toggle_pan_select")
+        self.toggle_pan_select_action.setShortcut("1")
+        self.toggle_pan_select_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.toggle_pan_select_action.triggered.connect(self.toggle_pan_select_mode)
+        self.map_canvas.addAction(self.toggle_pan_select_action)
+
         self.draw_line_action = QAction(self)
         self.draw_line_action.setObjectName("draw_line")
         self.draw_line_action.setCheckable(True)
@@ -228,7 +236,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.grid_action = QAction(self)
         self.grid_action.setObjectName("grid")
         self.grid_action.setCheckable(True)
-        self.grid_action.setChecked(True)
+        self.grid_action.setChecked(False)
         self.grid_action.triggered.connect(self.map_canvas.set_grid_visible)
 
         self.toggle_background_map_action = QAction(self)
@@ -238,11 +246,11 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.toggle_background_map_action.triggered.connect(self.toggle_background_map_visible)
 
         self.info_actions: dict[str, QAction] = {}
-        for field in ("name", "zone", "ip", "dvr"):
+        for field in ("name", "zone", "ip"):
             action = QAction(self)
             action.setObjectName(f"show_{field}")
             action.setCheckable(True)
-            action.setChecked(field == "name")
+            action.setChecked(False)
             action.triggered.connect(lambda checked=False, item=field: self.map_canvas.set_camera_info_visibility(item, checked))
             self.info_actions[field] = action
 
@@ -281,6 +289,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
         self.menuBar().addAction(self.settings_action)
         self.init_drawing_tools_dock()
+        self.set_canvas_mode(DrawingMode.PAN)
 
     def set_canvas_mode(self, mode: DrawingMode) -> None:
         mode_actions = {
@@ -299,6 +308,11 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             action.setChecked(action_mode == mode)
 
         self.map_canvas.set_drawing_mode(mode)
+
+    def toggle_pan_select_mode(self) -> None:
+        """Toggle quickly between Pan and Select modes."""
+        next_mode = DrawingMode.SELECT if self.map_canvas.drawing_mode == DrawingMode.PAN else DrawingMode.PAN
+        self.set_canvas_mode(next_mode)
 
     def init_canvas_history(self) -> None:
         """Wire canvas history to the active layout persistence layer."""
@@ -351,7 +365,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.set_canvas_mode(DrawingMode.SELECT)
         if hasattr(self, "layers_panel"):
             self.layers_panel.clear_selection_silently()
-        self.map_canvas.select_camera_item(camera_id, center=True)
+        self.map_canvas.highlight_device_topology(camera_id, center=True)
 
     def add_text_annotation(self) -> None:
         """Add or edit a text annotation."""
@@ -646,7 +660,6 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.info_actions["name"].setText(t("action.show_name"))
             self.info_actions["zone"].setText(t("action.show_zone"))
             self.info_actions["ip"].setText(t("action.show_ip"))
-            self.info_actions["dvr"].setText(t("action.show_dvr"))
             self.file_menu.setTitle(t("menu.file"))
             self.action_menu.setTitle(t("menu.action"))
             self.view_menu.setTitle(t("menu.view"))

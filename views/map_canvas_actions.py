@@ -104,6 +104,8 @@ class MapCanvasActions:
 
     def set_camera_info_visibility(self, field: str, visible: bool) -> None:
         """Toggle one camera metadata field on all map markers."""
+        if field not in {"name", "zone", "ip"}:
+            return
         self.camera_info_visibility[field] = visible
         for item in self.camera_items.values():
             item.set_info_visibility(self.camera_info_visibility)
@@ -207,8 +209,11 @@ class MapCanvasActions:
 
     def clear_map_items(self) -> None:
         """Remove cameras and annotation items for a layout switch."""
+        if hasattr(self, "clear_topology_highlight"):
+            self.clear_topology_highlight()
         self._remove_device_link_items()
         self.device_links = []
+        self.device_catalog = {}
         for item in list(self.scene.items()):
             if item.data(1) in {"camera", "drawing"}:
                 self.pan_item_flags.pop(item, None)

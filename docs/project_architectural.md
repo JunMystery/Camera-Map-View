@@ -26,15 +26,15 @@ Current UI composition:
 - **Menu bar:** File, Action, View, Language, and a top-level Settings action.
 - **Control Panel:** fixed left dock with layout selection/CRUD, device inventory/CSV actions, link-tree grouping, status filter, placed/unplaced toggle, and a close button inside the panel header.
 - **MapCanvas:** central `QGraphicsView` for background map, theme-aware canvas edit boundary, optional grid, mouse-wheel zoom, pan, rubber-band multi-select in Select mode, device items, camera FOV, topology-link overlays, drawing annotations, and drag/drop placement.
-- **Drawing Tools:** fixed floating child widget anchored near the canvas. It has Draw and Shapes menus, a live color swatch, can collapse to one button, and cannot be dragged into a separate window.
-- **Layers Panel:** docked two-column user layer stack with nested object rows, icon visibility, object locks, drag/drop layer reassignment, and front/back ordering.
+- **Drawing Tools:** fixed floating child widget anchored near the canvas. It is visible but collapsed by default, has Draw and Shapes menus, live stroke/fill color swatches, can collapse to one button, and cannot be dragged into a separate window.
+- **Layers Panel:** docked two-column user layer stack with one-level layer groups, nested object rows, icon visibility, object locks, drag/drop layer reassignment, and front/back ordering. It is hidden by default at startup.
 - **Status Dashboard:** total devices plus monitored online/offline counts.
 - **Settings Dialog:** application-level Network and Appearance tabs only.
 - **Layout Properties Dialog:** layout name, canvas width/height, grid size, and background scale.
 
 Dock title bars are hidden with empty title-bar widgets. Panel titles and close buttons live inside the panel headers, while `QDockWidget.windowTitle()` remains available for View menu toggle actions.
 
-The Drawing Tools panel is self-contained and is not exposed as `View > Drawing Tools`.
+The Drawing Tools panel is self-contained and is not exposed as `View > Drawing Tools`; the View menu keeps Control Panel, Layers, Grid, Background Map, and zoom actions.
 
 ## Data Model And Persistence
 
@@ -53,10 +53,10 @@ assets/data/camera_manager.db.bak
 Core tables:
 
 - `map_layouts`: independent workspaces with name, background path, grid size, canvas size, and background scale.
-- `cameras`: layout-scoped device records. Fields include device kind, variant, optional IP, ping preference, placement, rotation/display scale, camera FOV, status, zone, DVR origin, layer membership, location photo path, object lock, object z-index, and placed/unplaced state.
+- `cameras`: layout-scoped device records. Fields include device kind, variant, optional IP, ping preference, placement, rotation/display scale, camera FOV, status, zone, layer membership, location photo path, object lock, object z-index, and placed/unplaced state. `dvr_origin` is a legacy compatibility field; current UI derives Parent IP from `device_links`.
 - `device_links`: layout-scoped directed upstream topology links, for example `Camera -> AP -> Switch -> Router`.
 - `canvas_layers`: user-managed layer stack per layout, including name, position, visibility, and lock state.
-- `drawing_shapes`: layout-scoped annotations, including geometry, color, text labels, image asset paths, layer membership, display name, object lock, and object z-index.
+- `drawing_shapes`: layout-scoped annotations, including geometry, stroke color, fill color, text labels, image asset paths, layer membership, display name, object lock, object visibility, and object z-index.
 - `ping_history`: status history records for monitored devices.
 
 `controllers.camera_data_manager.CameraDataManager` is the facade for device CRUD, layer operations, layout operations, directed link operations, drawing persistence, CSV import/export, and ping history. It mixes in:
@@ -94,43 +94,48 @@ Device records can be created, edited, deleted, imported from CSV, and exported 
 
 Device properties support:
 
-- Generic device name, kind, variant, optional IP, RTSP port, zone, DVR origin, status, ping preference, and notes.
+- Generic device name, kind, variant, optional IP, RTSP port, zone, status, ping preference, and notes. Parent IP is not edited manually; it is derived from direct upstream device links.
 - Camera-only FOV choices `80`, `180`, and `360`.
 - Camera location image upload/removal. Images are imported into `assets/camera_photos/` as JPG with max height `1440px` and quality `75`.
-- A dedicated "Manage connections" dialog for outgoing links and read-only incoming links.
+- Optional device badge text, capped at 3 characters, rendered at the top-right of the device marker.
+- A dedicated "Manage connections" dialog for outgoing links and incoming unlink actions.
 
 The Control Panel device list:
 
 - Defaults to the Placed tab, with Unplaced available beside it.
-- Supports search by name, IP address, DVR origin, zone, device kind, and variant.
+- Supports search by name, IP address, derived Parent IP, zone, device kind, and variant.
 - Uses a status dropdown filter: All, Online, Offline, Unknown.
 - Builds a topology tree from directed links: roots are devices without an upstream outgoing target, children are downstream devices that point into each parent, and standalone devices appear under Unlinked.
 - Preserves topology context during search by keeping ancestor paths and matching subtrees visible instead of making linked devices look unlinked.
 - Supports multi-select quick linking: drag one or more device rows onto an upstream device row to create `source -> target` links.
 - Supports ungrouping/unlinking from the topology tree: right-click selected device rows and choose Ungroup, or drag linked rows to blank tree space.
+- Supports changing one selected device's parent from the row context menu. `DeviceParentPickerDialog` lists all devices in the current layout, including unplaced devices, with live search and cycle-safe filtering.
+- Keeps topology groups collapsed by default. Link/unlink refreshes preserve only groups the user opened manually; search is the only flow that auto-expands ancestors to reveal matches and scrolls to the first match.
 - Uses SVG device icons and supports dragging device rows onto the canvas.
-- Selecting a placed device row switches the canvas to Select mode, centers that device, and clears LayersPanel selection.
+- Selecting a placed device row switches the canvas to Select mode, centers that device, clears LayersPanel selection, and highlights the selected device's upstream path plus downstream subtree on canvas.
 
-Dropping a device onto `MapCanvas` marks it placed, stores its position, assigns it to the active canvas layer, and adds a scene item. Placed devices can show configurable labels for name, zone, IP, and DVR origin.
+Dropping a device onto `MapCanvas` marks it placed, stores its position, assigns it to the active canvas layer, and adds a scene item. Placed devices can show configurable labels for name, zone, IP, and derived Parent IP.
 
-In `Select` mode, device and drawing items can be selected individually or with rubber-band drag selection. Device items can be moved, edited, deleted from storage, unplaced from the canvas, or resized from the selected resize handle. The resize handle is drawn near the device body with a larger hit area than its visual square so it is easier to grab. Device movement is not clamped to the canvas boundary; users can move markers outside the edit area near map edges, and snapshot export crops anything outside the scene rectangle. Camera items additionally support direct rotation by dragging the selected rotation ring, location image viewing, and FOV rendering.
+In `Select` mode, device and drawing items can be selected individually or with rubber-band drag selection. Device items can be moved, edited, deleted from storage, unplaced from the canvas, or resized from the selected resize handle. The resize handle is drawn near the device body with a larger hit area than its visual square so it is easier to grab and stays separated from the camera rotation handle. Device movement is not clamped to the canvas boundary; users can move markers outside the edit area near map edges, and snapshot export crops anything outside the scene rectangle. All device kinds can resize through `display_scale`; only cameras expose a rotation handle. Camera items additionally support location image viewing and FOV rendering.
 
 ## Device Topology Links
 
 Topology links use the direction `source_device -> upstream_target_device`.
 
-Links can be edited in `DeviceConnectionsDialog` or created on the canvas with the Link Device tool. The Link Device tool only creates links; it does not remove links.
+Links can be edited in `DeviceConnectionsDialog`, changed from the Control Panel parent picker, created from the Control Panel quick-link drag/drop flow, or created on the canvas with the Link Device tool. The Link Device tool only creates links; it does not remove links.
 
-The Control Panel topology tree can also create or remove links. Dropping one or more device rows onto another device row creates upstream links to the target when validation succeeds. Dropping linked rows onto blank tree space or using the Ungroup context action removes their outgoing parent links and refreshes the panel immediately, while preserving downstream child links.
+The Control Panel topology tree can also create or remove links. Dropping one or more device rows onto another device row creates upstream links to the target when validation succeeds. Dropping linked rows onto blank tree space or using the Ungroup context action removes their outgoing parent links and refreshes the panel immediately, while preserving downstream child links. Multi-select drag/drop uses `CopyAction` because it creates topology links instead of moving tree rows.
 
-Links are hidden by default. Selecting exactly one placed device renders only the related topology:
+Links are hidden by default. Selecting exactly one placed device or focusing one from the Control Panel renders only the related topology:
 
-- Downstream closure: all lower devices that directly or indirectly point into the selected device.
-- Upstream path: one deterministic path from the selected device toward the highest upstream/root device.
+- Downstream closure: all lower devices that directly or indirectly point into the selected device, rendered in cyan `#38bdf8`.
+- Upstream path: one deterministic path from the selected device toward the highest upstream/root device, rendered in amber `#f59e0b`.
 
 This means selecting an endpoint camera shows its path upward, selecting an AP or switch shows its downstream branch plus one upstream path, and selecting a root/router/server-style device shows the downstream tree under it.
 
-Link removal is intentionally tied to `Select` mode. When related links are visible, right-clicking a link opens "Remove device link". The link item uses a wide hit-test shape for easier right-clicking while keeping the visible dashed line thin.
+Right-click unlink directly on canvas links is disabled. Link removal is intentionally handled from Control Panel Ungroup/blank-drop actions or connection dialogs. Link items still use a wide hit-test shape internally so hover/selection behavior is forgiving while the visible dashed line stays thin.
+
+When a placed device is focused from the Control Panel, the canvas applies transient topology highlight state. The selected device and related upstream/downstream devices blink between red and yellow outlines, siblings outside the selected path/subtree are not highlighted, and highlighted cameras use the expanded FOV radius/alpha.
 
 ## Camera Location Images And Active Ping
 
@@ -171,7 +176,7 @@ Available canvas modes are defined by `views.map_drawing_tools.DrawingMode`:
 - `FREEHAND`
 - `LINK`
 
-The app opens in `PAN` mode by default. `PAN` uses `ScrollHandDrag`, clears selection, and disables item selectable/movable/focus flags until another mode is selected.
+The app opens in `PAN` mode by default. `PAN` uses `ScrollHandDrag`, clears selection, and disables item selectable/movable/focus flags until another mode is selected. At startup the Drawing Tools panel is collapsed rather than hidden, so the user can reopen it with one visible button.
 
 Canvas interaction:
 
@@ -192,12 +197,16 @@ The Drawing Tools panel contains icon-only actions for:
 - Text annotation
 - Image annotation
 - Color
+- Fill color / No fill for closed shapes
 - Delete selected
 - Link device
+- Background map visibility
 - Grid visibility
-- Camera/device info visibility: name, zone, IP, DVR
+- Camera/device info visibility: name, zone, IP, Parent IP
 
 Text annotations use `DrawingShape.line_thickness` as font size. Legacy text with `line_thickness <= 2` renders at the default size `18`. In Select mode, text, image, and shape annotations expose resize and rotation handles. Text rotation is stored in `DrawingShape.points` as `[x, y, rotation]`; image size and rotation are stored as `[x, y, width, height, rotation]`; rectangle-style shapes can store `[x1, y1, x2, y2, rotation]`. Legacy records without rotation still render with rotation `0`.
+
+Closed shapes support optional `DrawingShape.fill_color`. An empty fill color means no fill for legacy and new transparent shapes. Rectangle, rounded rectangle, ellipse, triangle, and zone/polygon consume fill color; line, freehand, text, and image ignore it.
 
 Background maps and inserted image annotations are imported through `utils.image_assets`. Supported image formats include PNG, JPG/JPEG, BMP, WEBP, and any format Qt can decode from the file dialog. Images taller than `1440px` are scaled down to height `1440` while preserving aspect ratio; images at or below `1440px` height keep their original pixel size. Inserted image annotations keep their original display size when they fit inside the current canvas and scale down only when needed to fit the scene.
 
@@ -211,11 +220,12 @@ Layers behave like a simplified Photoshop layer stack:
 - A layout with no user layers gets one base layer named `Layer 1`.
 - New devices, drawings, text annotations, and image annotations are assigned to the currently active layer.
 - Layer rows support expand/collapse, visibility, lock, rename, delete, and up/down reordering.
-- Object rows support rename, lock, delete, drag/drop to another layer, selection on canvas, and up/down front/back movement within their layer.
+- Object rows support rename, per-object visibility, lock, delete, drag/drop to another layer, selection on canvas, and up/down front/back movement within their layer.
 - Camera object rename changes the real `Camera.name`.
 - Drawing/image/text object rename persists `DrawingShape.display_name` without changing visible text content on the canvas.
 - Object lock disables selection/movement for that object and persists through reload.
 - Object z-index persists through reload and package export/import.
+- One-level layer grouping is supported. Groups may contain layers, but groups cannot be nested inside other groups. Group order is applied before layer order, and layer order is applied before each object's z-index.
 
 Runtime migration handles legacy layer IDs such as `*_cameras`, `*_drawings`, `*_images`, and `*_text` by moving their cameras/drawings into a normal user layer and removing legacy layer rows.
 
@@ -277,10 +287,10 @@ CSV import/export handles device inventory fields:
 - `variant`
 - `ping_enabled`
 - `zone`
-- `dvr_origin`
+- `parent_ip` (derived for CSV export from direct parent `device_links`; ignored on import; legacy `dvr_origin` is retained in the DB but no longer displayed)
 - `notes`
 
-CSV intentionally does not include camera location photos or topology links. Those belong to `.cmvmap` packages.
+CSV import is layout-scoped. If an imported ID already exists in the current layout, metadata is updated in place while preserving canvas state such as placement, position, rotation, display scale, layer, z-index, object visibility, lock, location image, and badge. Rows with data but no ID receive generated IDs in the `dev_<uuid8>` format. CSV intentionally does not include camera location photos or topology links. Those belong to `.cmvmap` packages.
 
 ## Network Monitoring
 
@@ -354,6 +364,24 @@ Translation tests verify:
 - Drawing annotations include floor boundaries, server room, text labels, and backbone hints.
 
 The script accepts `--db-path` for seeding a non-default SQLite database.
+
+## Windows EXE Build Helper
+
+`scripts/build_windows_exe.py` builds the app with PyInstaller when the user runs it manually. It does not install dependencies automatically and exits with a clear message if PyInstaller is missing.
+
+Output paths:
+
+```text
+bin/CameraMapView/
+build/pyinstaller/
+build/pyinstaller/CameraMapView.spec
+```
+
+The intended command is:
+
+```powershell
+python scripts\build_windows_exe.py
+```
 
 ## Verification
 

@@ -100,6 +100,7 @@ Assets
 
 Scripts
 +-- seed_demo_layout.py
++-- build_windows_exe.py
 ```
 
 `config/i18n.py` loads XML resources at startup and exposes the stable runtime API used by views and controllers: `t()`, `set_language()`, `get_language()`, `TRANSLATIONS`, `SUPPORTED_LANGUAGES`, and `LANGUAGE_LABELS`.
@@ -127,6 +128,7 @@ MainWindow.__init__()
 |   +-- top-level Settings action
 |   +-- init_drawing_tools_dock()
 |       +-- fixed floating DrawingToolsPanel
+|       +-- visible collapsed by default
 +-- CameraDataManager
 +-- CanvasHistoryManager
 +-- load first layout or show blank canvas
@@ -135,6 +137,7 @@ MainWindow.__init__()
 +-- init_layers_dock()
 |   +-- right QDockWidget
 |   +-- empty dock title bar
+|   +-- hidden by default
 |   +-- LayersPanel
 |       +-- internal title row
 |       +-- close button -> layers_dock.close()
@@ -163,6 +166,7 @@ View
 +-- zoom_out_action -> MapCanvas.scale(0.8)
 +-- zoom_fit_action -> MapCanvas.fit_in_view()
 +-- grid_action -> MapCanvas.set_grid_visible()
++-- toggle_background_map_action -> MapCanvas.set_background_map_visible()
 +-- control dock toggle
 +-- layers dock toggle
 
@@ -251,6 +255,14 @@ ControlLayoutPanel
 |   +-- delete outgoing parent links for selected sources
 |   +-- preserve downstream child links
 |   +-- refresh MapCanvas links and ControlLayoutPanel tree
++-- Context Change parent device
+|   +-- DeviceParentPickerDialog(all layout devices, including unplaced)
+|   +-- search by name/IP/kind/variant/Parent IP
+|   +-- exclude self and descendants
+|   +-- CameraPlacementController.change_device_parent(source, target)
+|       +-- remove existing outgoing parent links
+|       +-- create source -> target when validation succeeds
+|       +-- refresh MapCanvas links and ControlLayoutPanel tree
 +-- Drag device row -> MapCanvas.dropEvent()
     +-- CameraPlacementController.handle_camera_dropped()
         +-- assign active layer
@@ -281,6 +293,7 @@ CameraItem
 +-- deleted/unbound -> MapCanvas.camera_deleted -> CameraPlacementController.unplace_camera()
 +-- link mode click -> MapCanvas.device_link_created -> CameraPlacementController.add_device_link()
 +-- selection changed -> MapCanvas.refresh_device_links()
++-- topology focus from ControlLayoutPanel -> MapCanvas.highlight_device_topology()
 ```
 
 ## Control Panel Grouping Flow
@@ -292,6 +305,8 @@ ControlLayoutPanel.set_cameras(cameras, placed_ids, device_links)
 +-- filter by status dropdown
 +-- build incoming/outgoing maps from source -> target links
 +-- keep ancestor paths and matching subtrees for search context
++-- when search is active, auto-expand matched ancestor paths and scroll to first match
++-- when search is empty, preserve only user-expanded groups and keep new groups collapsed
 +-- roots = linked devices without outgoing upstream target
 +-- add root device tree items
 +-- recursively add downstream children
@@ -323,8 +338,10 @@ DrawingToolsPanel
 +-- add_text_action -> add/edit TextAnnotationDialog
 +-- insert_png_action -> import_image_asset() -> MapCanvas.add_image_annotation()
 +-- choose_color_action -> QColorDialog
++-- choose_fill_color_action -> QColorDialog or No fill
 +-- delete_selected_action -> MapCanvas.delete_selected_drawings()
 +-- link_device_action -> MapCanvas.set_drawing_mode(LINK)
++-- toggle_background_map_action -> MapCanvas.set_background_map_visible()
 +-- grid_action -> MapCanvas.set_grid_visible()
 +-- info actions -> MapCanvas.set_camera_info_visibility()
 ```
@@ -344,7 +361,7 @@ SELECT
 +-- allow camera rotate and resize handles
 +-- allow device resize handle for every device kind
 +-- allow device markers to move outside sceneRect for edge placement
-+-- allow right-click unlink on visible DeviceLinkItem
++-- no direct right-click unlink on visible DeviceLinkItem
 
 LINK
 +-- click source device
@@ -382,9 +399,11 @@ mouse/middle/space pan
 ```text
 MapCanvas.refresh_device_links()
 +-- remove previous overlay items
-+-- selected_id = selected device id
++-- selected_id = single selected/focused device id
 +-- related = downstream_links(selected_id) + upstream_path_links(selected_id)
-+-- create DeviceLinkItem for each visible source/target pair
++-- create DeviceLinkItem(link_role="downstream") for lower subtree links
++-- create DeviceLinkItem(link_role="upstream") for parent/root path links
++-- no single selected/focused device -> no topology link overlays
 ```
 
 ```text
@@ -402,7 +421,20 @@ upstream_path_links(source_id)
 +-- render that one path upward
 ```
 
-`DeviceLinkItem.shape()` uses a wide stroke for hit testing, while paint/pen keeps the visible dashed line thin.
+`DeviceLinkItem.shape()` uses a wide stroke for hit testing, while paint/pen keeps the visible dashed line thin. Canvas context-menu unlink is disabled; unlink actions live in the Control Panel and connection dialogs.
+
+Topology highlight flow:
+
+```text
+ControlLayoutPanel current device row
++-- CameraPlacementController.focus_camera_from_panel()
+    +-- MapCanvas.highlight_device_topology(device_id, center=True)
+        +-- selected device role = selected
+        +-- upstream/downstream related devices role = related
+        +-- blink outline red/yellow from canvas timer
+        +-- highlighted cameras use expanded FOV radius/alpha
+        +-- siblings outside selected path/subtree remain unhighlighted
+```
 
 ## Canvas And Layer Graph
 
@@ -463,9 +495,11 @@ LayersPanel
 +-- move object up/down -> MapCanvas.move_layer_object() -> object_z_changed
 +-- visibility icon button -> MapCanvas.set_layer_visible() + CameraDataManager.set_layer_visible()
 +-- layer lock -> MapCanvas.set_layer_locked() + CameraDataManager.set_layer_locked()
++-- object visibility icon -> MapCanvas.set_layer_object_visible() -> object_visibility_changed
 +-- object lock -> MapCanvas.set_layer_object_locked() -> object_locked_changed
 +-- object row rename -> MapCanvas.rename_layer_object() -> object_renamed
 +-- object drag/drop -> MapCanvas.move_layer_object_to_layer() -> object_layer_changed
++-- object reorder drag/drop -> MapCanvas.move_layer_object_to_index() -> object_z_changed
 +-- object row select -> MapCanvas.select_layer_object()
 ```
 
@@ -478,6 +512,16 @@ user layer item -> layer_position * 1000 + object_z_index
 device links -> 45
 camera handles/selection visuals -> item paint overlay
 ```
+
+Layer grouping rule:
+
+```text
+group position
++-- layer position
+    +-- object z_index
+```
+
+Groups are one level only. A group can contain layers; a group cannot contain another group.
 
 ## Multi-Layout Data Flow
 
@@ -565,6 +609,31 @@ SELECT mode
     +-- corner handles keep image aspect ratio
     +-- rotation uses scene-space center to avoid visual flicker
 +-- hold Ctrl during transform -> snap handle target to grid
+```
+
+## CSV Import/Export Flow
+
+```text
+Import CSV
++-- AppCameraActions.import_cameras_csv()
+    +-- services.camera_csv_service.import_cameras_from_csv()
+        +-- normalize BOM/whitespace/header case
+        +-- skip blank rows
+        +-- generate dev_<uuid8> for rows with data and blank id
+        +-- ignore parent_ip and legacy dvr_origin on import
+    +-- CameraDataManager.import_cameras_csv(layout_id)
+        +-- existing id in current layout -> update metadata in place
+        +-- new id -> insert device
+        +-- preserve placement, scale, rotation, layer, z, visibility, lock, image, badge
+        +-- reject duplicate IP conflicts with a different device in the layout
+    +-- refresh ControlLayoutPanel, canvas items, ping list, dashboard
+```
+
+```text
+Export CSV
++-- CameraDataManager.export_cameras_csv(layout_id)
+    +-- parent_ip = derived from direct outgoing source -> target links
+    +-- no dvr_origin column in exported header
 ```
 
 ## Package Export/Import Flow

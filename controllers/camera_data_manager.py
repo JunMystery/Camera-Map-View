@@ -202,16 +202,84 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
         return cursor.rowcount > 0
 
     def import_cameras_csv(self, file_path: str | Path, layout_id: str = "default") -> int:
-        """Import cameras from CSV and return the number of added records."""
-        added = 0
+        """Import cameras from CSV and return the number of added or updated records."""
+        imported = 0
         for camera in import_cameras_from_csv(file_path):
-            if self.add_camera(camera, layout_id=layout_id):
-                added += 1
-        return added
+            if self.upsert_camera_from_import(camera, layout_id):
+                imported += 1
+        return imported
+
+    def upsert_camera_from_import(self, camera: Camera, layout_id: str = "default") -> bool:
+        """Add or replace importable camera metadata inside one layout."""
+        if self.get_layout(layout_id) is None:
+            return False
+        existing = self.get_camera_in_layout(camera.id, layout_id)
+        if existing is None:
+            return self.add_camera(camera, layout_id=layout_id)
+        if not self._is_valid_camera(camera):
+            return False
+        conflicting_ip = self._camera_id_for_ip(camera.ip_address, layout_id)
+        if conflicting_ip and conflicting_ip != camera.id:
+            return False
+        merged = self._merged_import_camera(existing, camera)
+        try:
+            cursor = self.db.execute(
+                """
+                UPDATE cameras
+                SET name = ?,
+                    ip_address = ?,
+                    port = ?,
+                    camera_type = ?,
+                    notes = ?,
+                    zone = ?,
+                    device_kind = ?,
+                    variant = ?,
+                    ping_enabled = ?
+                WHERE id = ? AND layout_id = ?
+                """,
+                (
+                    merged.name,
+                    merged.ip_address,
+                    merged.port,
+                    merged.camera_type,
+                    merged.notes,
+                    merged.zone,
+                    merged.device_kind,
+                    merged.effective_variant(),
+                    int(merged.ping_enabled),
+                    merged.id,
+                    layout_id,
+                ),
+            )
+            return cursor.rowcount > 0
+        except sqlite3.IntegrityError:
+            return False
 
     def export_cameras_csv(self, file_path: str | Path, layout_id: str = "default") -> None:
         """Export all cameras to CSV."""
-        export_cameras_to_csv(self.get_all_cameras(layout_id), file_path)
+        export_cameras_to_csv(
+            self.get_all_cameras(layout_id),
+            file_path,
+            lambda camera_id: self.parent_ip_for_device(camera_id, layout_id),
+        )
+
+    def parent_ip_for_device(self, device_id: str, layout_id: str = "default") -> str:
+        """Return comma-separated direct parent IP addresses derived from device links."""
+        rows = self.db.fetch_all(
+            """
+            SELECT parent.ip_address
+            FROM device_links AS links
+            JOIN cameras AS parent
+              ON parent.id = links.target_device_id
+             AND parent.layout_id = links.layout_id
+            WHERE links.layout_id = ?
+              AND links.source_device_id = ?
+              AND COALESCE(parent.ip_address, '') <> ''
+            ORDER BY parent.name, parent.ip_address, parent.id
+            """,
+            (layout_id, device_id),
+        )
+        return ", ".join(dict.fromkeys(str(row["ip_address"]) for row in rows if row["ip_address"]))
 
     def get_camera(self, camera_id: str) -> Camera | None:
         """Return one camera by id."""
@@ -362,6 +430,43 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
         if camera.device_kind == DEVICE_KIND_CAMERA:
             return is_valid_ipv4(camera.ip_address)
         return not camera.ip_address or is_valid_ipv4(camera.ip_address)
+
+    def _camera_id_for_ip(self, ip_address: str, layout_id: str) -> str:
+        if not ip_address:
+            return ""
+        row = self.db.fetch_one(
+            "SELECT id FROM cameras WHERE layout_id = ? AND ip_address = ?",
+            (layout_id, ip_address),
+        )
+        return str(row["id"]) if row else ""
+
+    def _merged_import_camera(self, existing: Camera, imported: Camera) -> Camera:
+        return Camera(
+            id=existing.id,
+            name=imported.name,
+            ip_address=imported.ip_address,
+            port=imported.port,
+            camera_type=imported.camera_type,
+            position_x=existing.position_x,
+            position_y=existing.position_y,
+            rotation=existing.rotation,
+            display_scale=existing.display_scale,
+            status=existing.status,
+            last_check=existing.last_check,
+            notes=imported.notes,
+            zone=imported.zone,
+            dvr_origin=existing.dvr_origin,
+            layer_id=existing.layer_id,
+            location_image_path=existing.location_image_path,
+            device_kind=imported.device_kind,
+            variant=imported.effective_variant(),
+            ping_enabled=imported.ping_enabled,
+            fov_degrees=existing.fov_degrees,
+            object_locked=existing.object_locked,
+            z_index=existing.z_index,
+            object_visible=existing.object_visible,
+            badge_text=existing.badge_text,
+        )
 
     def _row_to_camera(self, row: sqlite3.Row) -> Camera:
         return Camera.from_dict(

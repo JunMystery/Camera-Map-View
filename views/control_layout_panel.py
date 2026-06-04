@@ -2,11 +2,13 @@
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QMimeData, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QDrag, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -42,6 +44,15 @@ class CameraTreeWidget(QTreeWidget):
         self._downstream_ids: dict[str, set[str]] = {}
         self._device_link_request_handler: Callable[[str, str], bool] | None = None
         self._device_unlink_request_handler: Callable[[list[str]], bool] | None = None
+        self._drag_in_progress = False
+        self.installEventFilter(self)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if self._drag_in_progress and event.type() == QEvent.Type.Wheel:
+            if self._handle_drag_wheel_event(event):
+                return True
+        return super().eventFilter(watched, event)
 
     def set_link_context(self, devices: dict[str, Camera], links: list[DeviceLink]) -> None:
         """Store topology state used to validate sidebar quick-link drops."""
@@ -79,7 +90,11 @@ class CameraTreeWidget(QTreeWidget):
         drag = QDrag(self)
         drag.setMimeData(mime_data)
         drag.setPixmap(self._drag_pixmap(item.text(0), str(item.data(0, Qt.ItemDataRole.UserRole + 2) or "")))
-        drag.exec(Qt.DropAction.CopyAction)
+        self._drag_in_progress = True
+        try:
+            drag.exec(Qt.DropAction.CopyAction)
+        finally:
+            self._drag_in_progress = False
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasFormat("application/x-device-id"):
@@ -89,6 +104,7 @@ class CameraTreeWidget(QTreeWidget):
 
     def dragMoveEvent(self, event) -> None:
         if event.mimeData().hasFormat("application/x-device-id"):
+            self._auto_scroll_for_drag(event)
             target = self._drop_target_item(event)
             if target is not None and target.data(0, Qt.ItemDataRole.UserRole + 1) == "camera":
                 if self._drop_sources_and_target(event) is None:
@@ -101,6 +117,11 @@ class CameraTreeWidget(QTreeWidget):
             return
         super().dragMoveEvent(event)
 
+    def wheelEvent(self, event) -> None:
+        if self._handle_drag_wheel_event(event):
+            return
+        super().wheelEvent(event)
+
     def dropEvent(self, event) -> None:
         if not event.mimeData().hasFormat("application/x-device-id"):
             super().dropEvent(event)
@@ -108,7 +129,10 @@ class CameraTreeWidget(QTreeWidget):
         target = self._drop_target_item(event)
         if target is None or target.data(0, Qt.ItemDataRole.UserRole + 1) != "camera":
             source_ids = self._drop_source_ids(event.mimeData())
-            if not source_ids or not self._request_device_unlink(source_ids):
+            if not source_ids:
+                event.ignore()
+                return
+            if not self._request_device_unlink(source_ids):
                 event.ignore()
                 return
             self._accept_copy_drop(event)
@@ -241,6 +265,47 @@ class CameraTreeWidget(QTreeWidget):
         event.setDropAction(Qt.DropAction.CopyAction)
         event.accept()
 
+    def _auto_scroll_for_drag(self, event) -> None:
+        point = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        margin = max(12, self.autoScrollMargin())
+        viewport_height = self.viewport().height()
+        if point.y() < margin:
+            self._scroll_by_steps(-self._edge_scroll_steps(margin - point.y(), margin))
+        elif point.y() > viewport_height - margin:
+            self._scroll_by_steps(self._edge_scroll_steps(point.y() - (viewport_height - margin), margin))
+
+    def _handle_drag_wheel_event(self, event) -> bool:
+        if not self._drag_in_progress:
+            return False
+        pixel_delta = event.pixelDelta().y() if hasattr(event, "pixelDelta") else 0
+        if pixel_delta:
+            self._scroll_by_pixels(-pixel_delta)
+            event.accept()
+            return True
+        delta = event.angleDelta().y()
+        if not delta:
+            return False
+        self._scroll_by_delta(delta)
+        event.accept()
+        return True
+
+    def _edge_scroll_steps(self, distance_into_margin: float, margin: int) -> int:
+        ratio = min(1.0, max(0.0, distance_into_margin / max(1, margin)))
+        return max(1, int(1 + ratio * 3))
+
+    def _scroll_by_delta(self, delta: int) -> None:
+        steps = max(1, abs(delta) // 120)
+        self._scroll_by_steps((-steps if delta > 0 else steps) * 3)
+
+    def _scroll_by_steps(self, steps: int) -> None:
+        scroll_bar = self.verticalScrollBar()
+        step_size = max(1, scroll_bar.singleStep())
+        self._scroll_by_pixels(steps * step_size)
+
+    def _scroll_by_pixels(self, pixels: int) -> None:
+        scroll_bar = self.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.value() + pixels)
+
     def _drag_pixmap(self, label: str, device_kind: str) -> QPixmap:
         pixmap = QPixmap(190, 36)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -255,6 +320,141 @@ class CameraTreeWidget(QTreeWidget):
         painter.drawText(38, 0, 146, 36, Qt.AlignmentFlag.AlignVCenter, label)
         painter.end()
         return pixmap
+
+
+class DeviceParentPickerDialog(QDialog):
+    """Pick one parent device from the full layout device catalog."""
+
+    def __init__(
+        self,
+        source_id: str,
+        cameras: dict[str, Camera],
+        device_links: list[DeviceLink],
+        parent_ip_lookup: Callable[[str], str],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.source_id = source_id
+        self.cameras = cameras
+        self.device_links = device_links
+        self.parent_ip_lookup = parent_ip_lookup
+        self.selected_parent_id = ""
+        self._excluded_ids = self._excluded_parent_ids()
+        self.setWindowTitle(t("dialog.parent_picker.title"))
+        self.setMinimumSize(420, 500)
+        self._build_ui()
+        self._refresh_list()
+
+    def selected_device_id(self) -> str:
+        """Return the selected parent device id."""
+        return self.selected_parent_id
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        self.search_input = QLineEdit(self)
+        self.search_input.setPlaceholderText(t("dialog.parent_picker.search"))
+        self.search_input.textChanged.connect(self._refresh_list)
+        layout.addWidget(self.search_input)
+
+        self.tree_widget = QTreeWidget(self)
+        self.tree_widget.setHeaderHidden(True)
+        self.tree_widget.setIndentation(8)
+        self.tree_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree_widget.itemSelectionChanged.connect(self._sync_buttons)
+        self.tree_widget.itemDoubleClicked.connect(lambda _item, _column: self._accept_current())
+        layout.addWidget(self.tree_widget, 1)
+
+        self.empty_label = QLabel(t("dialog.parent_picker.empty"), self)
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.empty_label)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        self.buttons.accepted.connect(self._accept_current)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        yes_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        no_button = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if yes_button is not None:
+            yes_button.setText(t("button.yes"))
+            yes_button.setDefault(True)
+        if no_button is not None:
+            no_button.setText(t("button.no"))
+            no_button.setObjectName("confirmNoButton")
+            no_button.setStyleSheet(
+                f"""
+                QPushButton#confirmNoButton {{
+                    background: {DANGER};
+                    color: {TEXT_WHITE};
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 14px;
+                }}
+                """
+            )
+        self._sync_buttons()
+
+    def _refresh_list(self) -> None:
+        query = self.search_input.text().strip().lower()
+        self.tree_widget.clear()
+        for camera in sorted(self.cameras.values(), key=lambda item: (item.name.lower(), item.id)):
+            if camera.id in self._excluded_ids:
+                continue
+            if query and query not in self._search_text(camera):
+                continue
+            item = QTreeWidgetItem([self._device_text(camera)])
+            item.setData(0, Qt.ItemDataRole.UserRole, camera.id)
+            item.setIcon(0, device_icon(camera.device_kind))
+            item.setToolTip(0, self._device_tooltip(camera))
+            self.tree_widget.addTopLevelItem(item)
+        self.empty_label.setVisible(self.tree_widget.topLevelItemCount() == 0)
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        ok_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setEnabled(self.tree_widget.currentItem() is not None)
+
+    def _accept_current(self) -> None:
+        item = self.tree_widget.currentItem()
+        if item is None:
+            return
+        self.selected_parent_id = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+        if self.selected_parent_id:
+            self.accept()
+
+    def _excluded_parent_ids(self) -> set[str]:
+        incoming: dict[str, list[str]] = {}
+        for link in self.device_links:
+            incoming.setdefault(link.target_device_id, []).append(link.source_device_id)
+        return {self.source_id, *self._descendant_ids(self.source_id, incoming, set())}
+
+    def _descendant_ids(self, device_id: str, incoming: dict[str, list[str]], visited: set[str]) -> set[str]:
+        if device_id in visited:
+            return set()
+        result: set[str] = set()
+        for child_id in incoming.get(device_id, []):
+            result.add(child_id)
+            result.update(self._descendant_ids(child_id, incoming, {*visited, device_id}))
+        return result
+
+    def _search_text(self, camera: Camera) -> str:
+        return (
+            f"{camera.name} {camera.ip_address} {camera.device_kind} "
+            f"{camera.effective_variant()} {self.parent_ip_lookup(camera.id)}"
+        ).lower()
+
+    def _device_text(self, camera: Camera) -> str:
+        ip_address = camera.ip_address or t("device.ip_empty")
+        return f"{camera.name} ({ip_address}) - {device_kind_label(camera.device_kind)} / {camera.effective_variant()}"
+
+    def _device_tooltip(self, camera: Camera) -> str:
+        parent_ip = self.parent_ip_lookup(camera.id) or t("camera_panel.no_dvr")
+        return f"{self._device_text(camera)}\n{t('action.show_dvr')}: {parent_ip}"
 
 
 class ControlLayoutPanel(QWidget):
@@ -272,6 +472,7 @@ class ControlLayoutPanel(QWidget):
     camera_focus_requested = pyqtSignal(str)
     device_link_requested = pyqtSignal(str, str)
     device_unlink_requested = pyqtSignal(object)
+    device_parent_change_requested = pyqtSignal(str, str)
     close_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -287,7 +488,8 @@ class ControlLayoutPanel(QWidget):
         self._icon_color = TEXT_ON_DARK
         self._device_link_request_handler: Callable[[str, str], bool] | None = None
         self._device_unlink_request_handler: Callable[[list[str]], bool] | None = None
-        self._forced_expanded_ids: set[str] = set()
+        self._last_search_query = ""
+        self._pre_search_expanded_groups: set[str] = set()
         self._build_ui()
         self.retranslate()
 
@@ -339,11 +541,25 @@ class ControlLayoutPanel(QWidget):
     def refresh_list(self) -> None:
         """Rebuild camera groups from search and placement filters."""
         query = self.search_input.text().strip().lower()
-        expanded_groups = self._expanded_group_keys() | self._forced_expanded_ids
+        current_expanded = self._expanded_group_keys()
+        if query and not self._last_search_query:
+            self._pre_search_expanded_groups = set(current_expanded)
+        search_cleared = not query and bool(self._last_search_query)
+        if search_cleared:
+            expanded_groups = set(self._pre_search_expanded_groups)
+            self._pre_search_expanded_groups.clear()
+        else:
+            expanded_groups = set(current_expanded)
+        self._last_search_query = query
         self._refreshing = True
+        if search_cleared:
+            self.tree_widget.clearSelection()
+            self.tree_widget.setCurrentItem(None)
         self.tree_widget.clear()
         incoming, outgoing, linked_ids, outgoing_sources = self._link_maps()
         display_ids, matched_ids = self._display_device_ids(query, incoming, outgoing)
+        if query:
+            expanded_groups.update(self._search_expanded_ids(matched_ids, incoming, outgoing, linked_ids))
         root_ids = sorted(
             [device_id for device_id in linked_ids if device_id not in outgoing_sources and device_id in display_ids],
             key=lambda device_id: self.cameras[device_id].name if device_id in self.cameras else device_id,
@@ -362,7 +578,15 @@ class ControlLayoutPanel(QWidget):
             self.tree_widget.addTopLevelItem(group_item)
             for device_id in unlinked_ids:
                 group_item.addChild(self._device_tree_item(device_id, incoming, display_ids, expanded_groups, set()))
-            group_item.setExpanded("group:unlinked" in expanded_groups or not expanded_groups)
+            group_item.setExpanded("group:unlinked" in expanded_groups)
+        self._restore_expanded_tree_state(expanded_groups)
+        if search_cleared:
+            self.tree_widget.clearSelection()
+            self.tree_widget.setCurrentItem(None)
+            self.tree_widget.collapseAll()
+            self._set_exact_expanded_tree_state(expanded_groups)
+        if query:
+            self._scroll_to_first_match(matched_ids)
         self._refreshing = False
 
     def retranslate(self) -> None:
@@ -448,6 +672,8 @@ class ControlLayoutPanel(QWidget):
         self.tree_widget.setDragEnabled(True)
         self.tree_widget.setAcceptDrops(True)
         self.tree_widget.setDropIndicatorShown(True)
+        self.tree_widget.setAutoScroll(True)
+        self.tree_widget.setAutoScrollMargin(28)
         self.tree_widget.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree_widget.set_device_link_request_handler(self._request_device_link_from_tree)
         self.tree_widget.set_device_unlink_request_handler(self._request_device_unlink_from_tree)
@@ -530,14 +756,31 @@ class ControlLayoutPanel(QWidget):
             edit_action.triggered.connect(lambda: self.camera_edit_requested.emit(selected_ids[0]))
             delete_action = QAction(t("camera_panel.delete"), menu)
             delete_action.triggered.connect(lambda: self.camera_delete_requested.emit(selected_ids[0]))
+            change_parent_action = QAction(t("camera_panel.change_parent"), menu)
+            change_parent_action.triggered.connect(lambda: self._show_parent_picker(selected_ids[0]))
             menu.addAction(edit_action)
             menu.addAction(delete_action)
+            menu.addAction(change_parent_action)
             menu.addSeparator()
         ungroup_action = QAction(t("camera_panel.ungroup"), menu)
         ungroup_action.setEnabled(self._has_parent_link(selected_ids))
         ungroup_action.triggered.connect(lambda: self._request_device_unlink_from_tree(selected_ids))
         menu.addAction(ungroup_action)
         menu.exec(self.tree_widget.viewport().mapToGlobal(pos))
+
+    def _show_parent_picker(self, source_device_id: str) -> None:
+        dialog = DeviceParentPickerDialog(
+            source_device_id,
+            self.cameras,
+            self.device_links,
+            self._parent_ip_for_device,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        target_parent_id = dialog.selected_device_id()
+        if target_parent_id:
+            self.device_parent_change_requested.emit(source_device_id, target_parent_id)
 
     def _emit_focused_camera(self) -> None:
         if self._refreshing:
@@ -563,8 +806,27 @@ class ControlLayoutPanel(QWidget):
         self.placed_button.setChecked(self.show_placed)
 
     def _matches(self, camera: Camera, query: str) -> bool:
-        haystack = f"{camera.name} {camera.ip_address} {camera.dvr_origin} {camera.zone} {camera.device_kind} {camera.variant}".lower()
+        haystack = (
+            f"{camera.name} {camera.ip_address} {self._parent_ip_for_device(camera.id)} "
+            f"{camera.zone} {camera.device_kind} {camera.variant}"
+        ).lower()
         return not query or query in haystack
+
+    def _parent_ip_for_device(self, device_id: str) -> str:
+        target_ids = sorted(
+            {link.target_device_id for link in self.device_links if link.source_device_id == device_id},
+            key=lambda item: (
+                self.cameras[item].name if item in self.cameras else item,
+                self.cameras[item].ip_address if item in self.cameras else "",
+                item,
+            ),
+        )
+        ips = [
+            self.cameras[target_id].ip_address
+            for target_id in target_ids
+            if target_id in self.cameras and self.cameras[target_id].ip_address
+        ]
+        return ", ".join(dict.fromkeys(ips))
 
     def _matches_status(self, camera: Camera) -> bool:
         bucket = self._status_filter_key(camera)
@@ -593,6 +855,61 @@ class ControlLayoutPanel(QWidget):
             groups.add(str(item.data(0, Qt.ItemDataRole.UserRole)))
         for child_index in range(item.childCount()):
             self._collect_expanded_group_keys(item.child(child_index), groups)
+
+    def _restore_expanded_tree_state(self, expanded_groups: set[str]) -> None:
+        for index in range(self.tree_widget.topLevelItemCount()):
+            self._restore_expanded_item_state(self.tree_widget.topLevelItem(index), expanded_groups)
+
+    def _restore_expanded_item_state(self, item: QTreeWidgetItem, expanded_groups: set[str]) -> None:
+        if item.childCount() > 0:
+            item.setExpanded(str(item.data(0, Qt.ItemDataRole.UserRole)) in expanded_groups)
+        for child_index in range(item.childCount()):
+            self._restore_expanded_item_state(item.child(child_index), expanded_groups)
+
+    def _set_exact_expanded_tree_state(self, expanded_groups: set[str]) -> None:
+        for index in range(self.tree_widget.topLevelItemCount()):
+            self._set_exact_expanded_item_state(self.tree_widget.topLevelItem(index), expanded_groups)
+
+    def _set_exact_expanded_item_state(self, item: QTreeWidgetItem, expanded_groups: set[str]) -> None:
+        for child_index in range(item.childCount()):
+            self._set_exact_expanded_item_state(item.child(child_index), expanded_groups)
+        item.setExpanded(str(item.data(0, Qt.ItemDataRole.UserRole)) in expanded_groups)
+
+    def _search_expanded_ids(
+        self,
+        matched_ids: set[str],
+        incoming: dict[str, list[str]],
+        outgoing: dict[str, list[str]],
+        linked_ids: set[str],
+    ) -> set[str]:
+        expanded: set[str] = set()
+        for device_id in matched_ids:
+            expanded.update(self._ancestor_ids(device_id, outgoing, set()))
+            expanded.update(self._descendant_ids(device_id, incoming, set()))
+            if device_id not in linked_ids:
+                expanded.add("group:unlinked")
+            if incoming.get(device_id):
+                expanded.add(device_id)
+        return expanded
+
+    def _scroll_to_first_match(self, matched_ids: set[str]) -> None:
+        for index in range(self.tree_widget.topLevelItemCount()):
+            item = self._first_matching_tree_item(self.tree_widget.topLevelItem(index), matched_ids)
+            if item is not None:
+                self.tree_widget.setCurrentItem(item)
+                self.tree_widget.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                return
+
+    def _first_matching_tree_item(self, item: QTreeWidgetItem, matched_ids: set[str]) -> QTreeWidgetItem | None:
+        if item.data(0, Qt.ItemDataRole.UserRole + 1) == "camera":
+            device_id = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+            if device_id in matched_ids:
+                return item
+        for child_index in range(item.childCount()):
+            found = self._first_matching_tree_item(item.child(child_index), matched_ids)
+            if found is not None:
+                return found
+        return None
 
     def _link_maps(self) -> tuple[dict[str, list[str]], dict[str, list[str]], set[str], set[str]]:
         incoming: dict[str, list[str]] = {}
@@ -667,34 +984,20 @@ class ControlLayoutPanel(QWidget):
         for child_id in incoming.get(device_id, []):
             if child_id in display_ids:
                 item.addChild(self._device_tree_item(child_id, incoming, display_ids, expanded_groups, next_visited))
-        item.setExpanded(device_id in expanded_groups or not expanded_groups)
+        item.setExpanded(device_id in expanded_groups)
         return item
 
     def _request_device_link_from_tree(self, source_device_id: str, target_device_id: str) -> bool:
-        self._force_expand_for_devices([source_device_id, target_device_id])
         if self._device_link_request_handler is not None:
             return bool(self._device_link_request_handler(source_device_id, target_device_id))
         self.device_link_requested.emit(source_device_id, target_device_id)
         return True
 
     def _request_device_unlink_from_tree(self, source_device_ids: list[str]) -> bool:
-        self._force_expand_for_devices([*source_device_ids, "group:unlinked"])
         if self._device_unlink_request_handler is not None:
             return bool(self._device_unlink_request_handler(source_device_ids))
         self.device_unlink_requested.emit(source_device_ids)
         return True
-
-    def _force_expand_for_devices(self, device_ids: list[str]) -> None:
-        incoming, outgoing, _linked_ids, _outgoing_sources = self._link_maps()
-        for device_id in device_ids:
-            if device_id == "group:unlinked":
-                self._forced_expanded_ids.add(device_id)
-                continue
-            if device_id not in self.cameras:
-                continue
-            self._forced_expanded_ids.add(device_id)
-            self._forced_expanded_ids.update(self._ancestor_ids(device_id, outgoing, set()))
-            self._forced_expanded_ids.update(self._descendant_ids(device_id, incoming, set()))
 
     def _has_parent_link(self, device_ids: list[str]) -> bool:
         device_id_set = set(device_ids)

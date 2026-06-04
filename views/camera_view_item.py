@@ -38,7 +38,8 @@ class CameraItem(QGraphicsItem):
         self.rotation_callback: Callable[[str, float], None] | None = None
         self.scale_callback: Callable[[str, float], None] | None = None
         self.snap_callback: Callable[[float, float], tuple[float, float]] | None = None
-        self.info_visibility = {"name": True, "zone": False, "ip": False, "dvr": False}
+        self.parent_ip_callback: Callable[[str], str] | None = None
+        self.info_visibility = {"name": False, "zone": False, "ip": False}
         self.is_rotating = False
         self.is_resizing = False
         self.resize_start_distance = 1.0
@@ -47,6 +48,8 @@ class CameraItem(QGraphicsItem):
         self.min_scale = 0.5
         self.max_scale = 3.0
         self.light_theme = False
+        self.topology_highlight_role = ""
+        self.topology_blink_phase = False
 
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -74,7 +77,7 @@ class CameraItem(QGraphicsItem):
                 ip_address=self.camera.ip_address or t("device.ip_empty"),
                 port=self.camera.port,
                 zone=self.camera.zone or t("camera.notes.empty"),
-                dvr_origin=self.camera.dvr_origin or t("camera.notes.empty"),
+                parent_ip=self._parent_ip_text() or t("camera.notes.empty"),
                 rotation=int(self.camera.rotation) % 360,
                 fov_degrees=int(self.camera.fov_degrees),
                 status=status_text,
@@ -127,6 +130,18 @@ class CameraItem(QGraphicsItem):
         """Register a callback that snaps coordinates before movement."""
         self.snap_callback = callback
 
+    def set_parent_ip_callback(self, callback: Callable[[str], str]) -> None:
+        """Register a callback that returns direct parent IP text."""
+        self.parent_ip_callback = callback
+        self.update_tooltip()
+        self.update()
+
+    def set_topology_highlight(self, role: str = "", blink_phase: bool = False) -> None:
+        """Apply transient topology highlighting from the canvas."""
+        self.topology_highlight_role = role if role in {"selected", "related"} else ""
+        self.topology_blink_phase = blink_phase
+        self.update()
+
     def boundingRect(self) -> QRectF:
         """Return the drawable area for icon, field-of-view wedge, and label."""
         return QRectF(-170, -170, 340, 220)
@@ -155,16 +170,17 @@ class CameraItem(QGraphicsItem):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         is_selected = self.isSelected()
+        is_topology_highlighted = bool(self.topology_highlight_role)
         is_camera = self.camera.device_kind == DEVICE_KIND_CAMERA
-        fov_color = self._fov_fill_color(is_selected)
+        fov_color = self._fov_fill_color(is_selected or is_topology_highlighted)
 
         if is_camera:
             painter.save()
             painter.rotate(self.camera.rotation)
-            fov_radius = 50.0 * (3.0 if is_selected else 1.2)
+            fov_radius = 50.0 * (3.0 if is_selected or is_topology_highlighted else 1.2)
 
-            fov_pen_color = self._fov_pen_color(is_selected)
-            fov_pen = QPen(fov_pen_color, 3.0 if is_selected else 1.8, Qt.PenStyle.DashLine)
+            fov_pen_color = self._fov_pen_color(is_selected or is_topology_highlighted)
+            fov_pen = QPen(fov_pen_color, 3.0 if is_selected or is_topology_highlighted else 1.8, Qt.PenStyle.DashLine)
             painter.setPen(fov_pen)
             if self.camera.fov_degrees >= 360:
                 painter.setBrush(QBrush(fov_color))
@@ -208,10 +224,10 @@ class CameraItem(QGraphicsItem):
         painter.setBrush(QBrush(status_color))
         painter.drawEllipse(-16, -14, 8, 8)
 
-        label_color = QColor(LIGHT_TEXT) if self.light_theme else QColor(TEXT_ON_DARK)
-        painter.setPen(QPen(label_color if is_selected else QColor(TEXT_MUTED), 1))
+        label_color = self._metadata_color(is_selected)
+        painter.setPen(QPen(label_color, 1))
         font = QFont("Inter", 8)
-        if is_selected:
+        if is_selected or self.topology_highlight_role:
             font.setBold(True)
         painter.setFont(font)
 
@@ -345,9 +361,12 @@ class CameraItem(QGraphicsItem):
             lines.append(self.camera.zone)
         if self.info_visibility.get("ip"):
             lines.append(self.camera.ip_address)
-        if self.info_visibility.get("dvr") and self.camera.dvr_origin:
-            lines.append(self.camera.dvr_origin)
         return lines
+
+    def _parent_ip_text(self) -> str:
+        if self.parent_ip_callback is None:
+            return ""
+        return self.parent_ip_callback(self.camera.id)
 
     def _is_on_rotation_ring(self, point: QPointF) -> bool:
         distance = math.hypot(point.x(), point.y())
@@ -412,8 +431,13 @@ class CameraItem(QGraphicsItem):
             refresh_links()
 
     def _paint_device_body(self, painter: QPainter, is_selected: bool) -> None:
-        outline_color = QColor(WARNING if is_selected else DANGER)
-        painter.setPen(QPen(outline_color, 2.4 if is_selected else 1.8))
+        if self.topology_highlight_role:
+            outline_color = QColor(WARNING if self.topology_blink_phase else DANGER)
+            outline_width = 3.2 if self.topology_highlight_role == "selected" else 2.6
+        else:
+            outline_color = QColor(WARNING if is_selected else DANGER)
+            outline_width = 2.4 if is_selected else 1.8
+        painter.setPen(QPen(outline_color, outline_width))
         painter.setBrush(QBrush(QColor("#f8fafc" if self.light_theme else "#1e293b")))
         painter.drawRoundedRect(QRectF(-20, -18, 40, 36), 5, 5)
 
@@ -442,6 +466,13 @@ class CameraItem(QGraphicsItem):
         painter.setFont(font)
         painter.setPen(QPen(QColor(TEXT_WHITE), 1))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge)
+
+    def _metadata_color(self, is_selected: bool) -> QColor:
+        if self.topology_highlight_role == "selected" or is_selected:
+            return QColor(WARNING if self.topology_blink_phase else DANGER)
+        if self.topology_highlight_role == "related":
+            return QColor(LIGHT_TEXT if self.light_theme else TEXT_ON_DARK)
+        return QColor(TEXT_MUTED)
 
     def _fov_fill_color(self, is_selected: bool) -> QColor:
         """Return a red FOV fill that stays visibly red over floor plans."""

@@ -45,7 +45,7 @@
     <string key="action.show_name">名前</string>
     <string key="action.show_zone">ゾーン</string>
     <string key="action.show_ip">IP</string>
-    <string key="action.show_dvr">元DVR</string>
+    <string key="action.show_dvr">親デバイスIP</string>
     <string key="menu.file">ファイル</string>
     <string key="menu.action">アクション</string>
     <string key="menu.view">表示</string>
@@ -122,6 +122,9 @@
     <string key="dialog.edit_text.title">テキスト編集</string>
     <string key="dialog.choose_color.title">描画色を選択</string>
     <string key="dialog.choose_fill_color.title">塗りつぶし色を選択</string>
+    <string key="dialog.parent_picker.title">親デバイスを変更</string>
+    <string key="dialog.parent_picker.search">デバイスを検索...</string>
+    <string key="dialog.parent_picker.empty">選択できる親デバイスがありません。</string>
     <string key="dialog.confirm_unload_map.title">背景マップを解除しますか？</string>
     <string key="dialog.confirm_unload_map.body">現在の背景マップがキャンバスから削除されます。続行しますか？</string>
     <string key="dialog.confirm_exit.title">アプリを終了しますか？</string>
@@ -144,16 +147,17 @@
     <string key="camera_panel.title">未配置デバイス</string>
     <string key="camera_panel.title_unplaced">未配置デバイス</string>
     <string key="camera_panel.title_placed">配置済みデバイス</string>
-    <string key="camera_panel.search">名前、IP、DVR、ゾーンでデバイスを検索...</string>
+    <string key="camera_panel.search">名前、IP、親デバイスIP、ゾーンでデバイスを検索...</string>
     <string key="camera_panel.unplaced">未配置</string>
     <string key="camera_panel.placed">配置済み</string>
     <string key="camera_panel.add">追加</string>
     <string key="camera_panel.edit">編集</string>
     <string key="camera_panel.delete">削除</string>
+    <string key="camera_panel.change_parent">親デバイスを変更...</string>
     <string key="camera_panel.ungroup">グループ解除</string>
     <string key="camera_panel.import">CSV取込</string>
     <string key="camera_panel.export">CSV出力</string>
-    <string key="camera_panel.no_dvr">DVR未設定</string>
+    <string key="camera_panel.no_dvr">親デバイスIPなし</string>
     <string key="camera_panel.online_group">オンライン</string>
     <string key="camera_panel.offline_group">オフライン</string>
     <string key="camera_panel.item">📹 {name}
@@ -166,7 +170,7 @@
     <string key="camera.tooltip">名前: {name}
 ゾーン: {zone}
 IP: {ip_address}:{port}
-元DVR: {dvr_origin}
+親デバイスIP: {parent_ip}
 種類: {camera_type}
 回転: {rotation}°
 状態: {status}
@@ -186,7 +190,7 @@ IP: {ip_address}:{port}
     <string key="camera_dialog.type">カメラ種別</string>
     <string key="camera_dialog.fov">FOV</string>
     <string key="camera_dialog.zone">ゾーン</string>
-    <string key="camera_dialog.dvr_origin">元DVR</string>
+    <string key="camera_dialog.dvr_origin">親デバイスIP</string>
     <string key="camera_dialog.rotation">回転角度</string>
     <string key="camera_dialog.status">状態</string>
     <string key="camera_dialog.notes">メモ</string>
@@ -239,7 +243,7 @@ IP: {ip_address}:{port}
 Variant: {variant}
 IP: {ip_address}:{port}
 ゾーン: {zone}
-元DVR: {dvr_origin}
+親デバイスIP: {parent_ip}
 回転: {rotation}
 FOV: {fov_degrees}
 状態: {status}
@@ -250,7 +254,7 @@ Ping: {ping}
 Variant: {variant}
 IP: {ip_address}:{port}
 ゾーン: {zone}
-元DVR: {dvr_origin}
+親デバイスIP: {parent_ip}
 状態: {status}
 Ping: {ping}
 メモ: {notes}</string>
@@ -317,6 +321,7 @@ Ping: {ping}
     <string key="status.device_link_skipped">デバイスリンクを作成できませんでした。</string>
     <string key="status.device_link_removed">デバイスリンクを削除しました。</string>
     <string key="status.device_link_remove_failed">デバイスリンクを削除できませんでした。</string>
+    <string key="status.device_parent_changed">親デバイスを変更しました。</string>
     <string key="status.background_map_missing">背景マップが読み込まれていません。</string>
     <string key="seed.cam_01.name">正門</string>
     <string key="seed.cam_01.notes">メイン駐車場の視野</string>

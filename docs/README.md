@@ -13,8 +13,8 @@ Camera Map View is a PyQt6 desktop diagramming tool for camera and network-devic
 
 - A fixed left Control Panel with layout management, device inventory, topology-tree grouping, status filtering, CSV actions, and a panel-local close button.
 - A central `MapCanvas` with mouse-wheel zoom, pan, rubber-band multi-select in Select mode, background map support, a theme-aware edit-area boundary, optional grid rendering, device markers, field-of-view rendering, topology-link overlays, and drawing annotations.
-- A fixed floating Drawing Tools panel anchored near the canvas, including Draw and Shapes menus plus a live color swatch button.
-- A right Layers panel with a compact two-column tree, user-managed layers, nested object rows, icon visibility, lock, rename, drag/drop, delete, and front/back ordering.
+- A fixed floating Drawing Tools panel anchored near the canvas. It is visible but collapsed by default, opens to icon-only drawing controls, and includes Draw and Shapes menus plus live stroke/fill color swatches.
+- A right Layers panel with a compact two-column tree, user-managed layers, one-level layer groups, nested object rows, icon visibility, lock, rename, drag/drop, delete, and front/back ordering. It is hidden by default at startup.
 - A menu bar with File, Action, View, Language, and Settings. File can import/export `.cmvmap` packages and export a static snapshot image. The Action menu exposes Undo/Redo for the 10 most recent canvas-state changes in the active layout.
 
 The app can start with zero layouts. In that state the canvas and panels are blank, layout-dependent actions are disabled, and the user must create a layout or import a `.cmvmap` package before editing.
@@ -73,8 +73,13 @@ Snapshot export writes the current scene as PNG/JPEG for reports. It renders the
 
 Device markers can be moved freely outside the canvas edit boundary so users can position markers near map edges without being blocked by oversized SVG or FOV bounds. Static snapshot export still renders only the canvas `sceneRect`, so any device portion outside that region is cropped from the report image.
 
-The Control Panel topology tree supports quick linking by dragging one or more device rows onto an upstream device row. Dragging linked rows to blank space, or using the row context menu, ungroups them by removing their outgoing upstream link while keeping their downstream child links intact.
+The Control Panel topology tree supports quick linking by dragging one or more device rows onto an upstream device row. Dragging linked rows to blank space, or using the row context menu, ungroups them by removing their outgoing upstream link while keeping their downstream child links intact. Right-click unlink directly on canvas links is disabled; link removal is handled from the Control Panel or connection dialogs.
+
+CSV device import is layout-scoped. Existing devices with the same ID in the current layout are updated in place while preserving placement, layer, visibility, lock, z-order, badge, image, rotation, and scale state. Rows with data but no ID are imported with generated IDs, and exported Parent IP is derived from `device_links` rather than stored as an editable field.
 
 ## Demo Data
 
-The repository includes `scripts/seed_demo_layout.py`, an idempotent seed script that creates or refreshes a sample multi-floor building layout with devices, topology links, layers, and annotations.
+The repository includes:
+
+- `scripts/seed_demo_layout.py`: idempotent seed script that creates or refreshes a sample multi-floor building layout with devices, topology links, layers, and annotations.
+- `scripts/build_windows_exe.py`: PyInstaller helper for Windows packaging. It writes app output to `bin/CameraMapView/` and build/spec files to `build/pyinstaller/`. The script is not run automatically.

@@ -5,9 +5,8 @@ from typing import Any
 
 from PyQt6.QtCore import QPointF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap
-from PyQt6.QtWidgets import QGraphicsItem, QGraphicsLineItem, QGraphicsPixmapItem, QGraphicsView, QMenu
+from PyQt6.QtWidgets import QGraphicsItem, QGraphicsLineItem, QGraphicsPixmapItem, QGraphicsView
 
-from config.i18n import t
 from models.camera_data_model import Camera
 from models.canvas_layer_model import CanvasLayer
 from models.device_link_model import DeviceLink
@@ -29,11 +28,13 @@ class DeviceLinkItem(QGraphicsLineItem):
         line: tuple[float, float, float, float],
         delete_callback: Callable[[str, str], None],
         mode_getter: Callable[[], DrawingMode],
+        link_role: str = "downstream",
     ) -> None:
         super().__init__(*line)
         self.link = link
         self.delete_callback = delete_callback
         self.mode_getter = mode_getter
+        self.link_role = link_role if link_role == "upstream" else "downstream"
         self._dash_offset = 0.0
         self._timer = QTimer()
         self._timer.timeout.connect(self._advance_dash)
@@ -55,13 +56,7 @@ class DeviceLinkItem(QGraphicsLineItem):
         return stroker.createStroke(path)
 
     def contextMenuEvent(self, event: Any) -> None:
-        if self.mode_getter() != DrawingMode.SELECT:
-            event.ignore()
-            return
-        menu = QMenu()
-        remove_action = menu.addAction(t("action.remove_device_link"))
-        remove_action.triggered.connect(lambda: self.delete_callback(self.link.source_device_id, self.link.target_device_id))
-        menu.exec(event.screenPos())
+        event.ignore()
 
     def stop_animation(self) -> None:
         """Stop the link animation before the scene removes the item."""
@@ -72,7 +67,9 @@ class DeviceLinkItem(QGraphicsLineItem):
         self._apply_pen()
 
     def _apply_pen(self) -> None:
-        pen = QPen(QColor("#38bdf8"), 2.2, Qt.PenStyle.CustomDashLine)
+        color = "#f59e0b" if self.link_role == "upstream" else "#38bdf8"
+        width = 3.0 if self.link_role == "upstream" else 2.2
+        pen = QPen(QColor(color), width, Qt.PenStyle.CustomDashLine)
         pen.setDashPattern([6.0, 4.0])
         pen.setDashOffset(self._dash_offset)
         self.setPen(pen)
@@ -126,12 +123,13 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.is_panning = False
         self.pan_start_pos = QPointF()
         self.camera_items: dict[str, CameraItem] = {}
+        self.device_catalog: dict[str, Camera] = {}
         self.grid_items: list[QGraphicsItem] = []
         self.background_item: QGraphicsPixmapItem | None = None
         self.canvas_bounds_item: QGraphicsItem | None = None
         self.background_map_visible = True
         self.snap_to_grid_enabled = False
-        self.grid_visible = True
+        self.grid_visible = False
         self.grid_size = 20
         self.background_source_pixmap: QPixmap | None = None
         self.background_scale = 1.0
@@ -147,7 +145,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.device_links: list[DeviceLink] = []
         self.device_link_items: list[DeviceLinkItem] = []
         self.drawing_tool = DrawingTool(self.snap_point)
-        self.camera_info_visibility = {"name": True, "zone": False, "ip": False, "dvr": False}
+        self.camera_info_visibility = {"name": False, "zone": False, "ip": False}
         self.current_layout_id = "default"
         self.canvas_layers: list[CanvasLayer] = self._fallback_layers(self.current_layout_id)
         self.layer_default_names = {layer.id: layer.name for layer in self.canvas_layers}
@@ -162,15 +160,24 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self._interaction_history_active = False
         self._priority_raised_item: QGraphicsItem | None = None
         self._priority_raised_z = 0.0
+        self.topology_focus_id = ""
+        self.topology_highlight_ids: set[str] = set()
+        self.topology_upstream_link_ids: set[str] = set()
+        self.topology_blink_phase = False
+        self._applying_topology_highlight = False
+        self.topology_blink_timer = QTimer(self)
+        self.topology_blink_timer.timeout.connect(self._advance_topology_blink)
+        self.topology_blink_timer.start(450)
 
         self.set_drawing_mode(DrawingMode.PAN)
-        self.scene.selectionChanged.connect(self.refresh_device_links)
+        self.scene.selectionChanged.connect(self._handle_selection_changed)
         self.draw_default_grid()
         QTimer.singleShot(0, self.fit_in_view)
 
     def add_camera_item(self, camera: Camera) -> CameraItem:
         """Create and add a camera item to the map."""
         self.remove_camera_item(camera.id)
+        self.device_catalog[camera.id] = camera
 
         item = CameraItem(camera)
         item.set_light_theme(self.light_theme)
@@ -181,6 +188,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         item.set_rotation_callback(self.camera_rotated.emit)
         item.set_scale_callback(self.camera_resized.emit)
         item.set_snap_callback(self.snap_point)
+        item.set_parent_ip_callback(self.parent_ip_for_device)
         item.set_info_visibility(self.camera_info_visibility)
         item.setData(1, "camera")
         item.setData(6, camera.object_locked)
@@ -274,6 +282,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         """Switch between selection and drawing modes."""
         self.drawing_mode = DrawingMode(mode)
         self.pending_device_link_source_id = ""
+        if self.drawing_mode != DrawingMode.SELECT:
+            self.clear_topology_highlight()
         if self.drawing_mode == DrawingMode.PAN:
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -287,7 +297,36 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     def set_device_links(self, links: list[DeviceLink]) -> None:
         """Replace topology links used for temporary canvas overlays."""
         self.device_links = list(links)
+        for item in self.camera_items.values():
+            item.update_tooltip()
+            item.update()
         self.refresh_device_links()
+
+    def set_device_catalog(self, cameras: list[Camera]) -> None:
+        """Replace lookup data for all devices in the active layout."""
+        self.device_catalog = {camera.id: camera for camera in cameras}
+        for item in self.camera_items.values():
+            if item.camera.id in self.device_catalog:
+                item.camera = self.device_catalog[item.camera.id]
+            item.update_tooltip()
+            item.update()
+
+    def parent_ip_for_device(self, device_id: str) -> str:
+        """Return direct parent IP addresses for one device from current canvas links."""
+        parent_ids = sorted(
+            {link.target_device_id for link in self.device_links if link.source_device_id == device_id},
+            key=lambda item: (
+                self.device_catalog[item].name if item in self.device_catalog else item,
+                self.device_catalog[item].ip_address if item in self.device_catalog else "",
+                item,
+            ),
+        )
+        ips = [
+            self.device_catalog[parent_id].ip_address
+            for parent_id in parent_ids
+            if parent_id in self.device_catalog and self.device_catalog[parent_id].ip_address
+        ]
+        return ", ".join(dict.fromkeys(ips))
 
     def refresh_device_links(self) -> None:
         """Render topology links related to the single selected device."""
@@ -295,7 +334,15 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         selected_id = self._selected_device_id()
         if not selected_id:
             return
-        for link in self._related_device_links(selected_id):
+        downstream_links = self._downstream_links(selected_id)
+        upstream_links = self._upstream_path_links(selected_id)
+        related_links = [*downstream_links, *upstream_links]
+        seen: set[str] = set()
+        upstream_ids = {link.id for link in upstream_links}
+        for link in related_links:
+            if link.id in seen:
+                continue
+            seen.add(link.id)
             source = self.camera_items.get(link.source_device_id)
             target = self.camera_items.get(link.target_device_id)
             if source is None or target is None:
@@ -305,9 +352,83 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
                 (source.pos().x(), source.pos().y(), target.pos().x(), target.pos().y()),
                 self._request_delete_device_link,
                 lambda: self.drawing_mode,
+                "upstream" if link.id in upstream_ids else "downstream",
             )
             self.scene.addItem(line)
             self.device_link_items.append(line)
+
+    def highlight_device_topology(self, device_id: str, center: bool = True) -> bool:
+        """Select one device and highlight its upstream path plus downstream subtree."""
+        item = self.camera_items.get(device_id)
+        if item is None or self._item_effective_locked(item) or not item.isVisible():
+            self.clear_topology_highlight()
+            return False
+
+        return self._set_topology_focus(device_id, center=center, select_item=True)
+
+    def _set_topology_focus(self, device_id: str, center: bool = False, select_item: bool = False) -> bool:
+        item = self.camera_items.get(device_id)
+        if item is None or self._item_effective_locked(item) or not item.isVisible():
+            self.clear_topology_highlight()
+            return False
+
+        downstream_links = self._downstream_links(device_id)
+        upstream_links = self._upstream_path_links(device_id)
+        highlight_ids = {device_id}
+        for link in [*downstream_links, *upstream_links]:
+            highlight_ids.update({link.source_device_id, link.target_device_id})
+
+        self._applying_topology_highlight = True
+        try:
+            if select_item:
+                self.scene.clearSelection()
+                item.setSelected(True)
+            if center:
+                self.centerOn(item)
+            self.topology_focus_id = device_id
+            self.topology_highlight_ids = highlight_ids
+            self.topology_upstream_link_ids = {link.id for link in upstream_links}
+            self._apply_topology_highlight_roles()
+            self.refresh_device_links()
+        finally:
+            self._applying_topology_highlight = False
+        return True
+
+    def clear_topology_highlight(self) -> None:
+        """Clear transient topology highlight state without changing persisted data."""
+        if not self.topology_focus_id and not self.topology_highlight_ids:
+            return
+        self.topology_focus_id = ""
+        self.topology_highlight_ids = set()
+        self.topology_upstream_link_ids = set()
+        for item in self.camera_items.values():
+            item.set_topology_highlight("")
+
+    def _handle_selection_changed(self) -> None:
+        if self._applying_topology_highlight:
+            return
+        selected_id = self._selected_device_id()
+        if selected_id:
+            self._set_topology_focus(selected_id, center=False, select_item=False)
+            return
+        if self.topology_focus_id:
+            self.clear_topology_highlight()
+        self.refresh_device_links()
+
+    def _advance_topology_blink(self) -> None:
+        if not self.topology_highlight_ids:
+            return
+        self.topology_blink_phase = not self.topology_blink_phase
+        self._apply_topology_highlight_roles()
+
+    def _apply_topology_highlight_roles(self) -> None:
+        for camera_id, item in self.camera_items.items():
+            if camera_id == self.topology_focus_id:
+                item.set_topology_highlight("selected", self.topology_blink_phase)
+            elif camera_id in self.topology_highlight_ids:
+                item.set_topology_highlight("related", self.topology_blink_phase)
+            else:
+                item.set_topology_highlight("")
 
     def refresh_camera_item(self, camera: Camera) -> None:
         """Refresh an existing camera item from updated model data."""
@@ -316,6 +437,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
             return
 
         item.camera = camera
+        self.device_catalog[camera.id] = camera
+        item.set_parent_ip_callback(self.parent_ip_for_device)
         item.setData(9, camera.object_visible)
         item.setPos(camera.position_x, camera.position_y)
         item.setScale(camera.display_scale)

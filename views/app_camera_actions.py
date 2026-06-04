@@ -27,6 +27,7 @@ class AppCameraActions:
             self._refresh_camera_panel()
             self.refresh_ping_cameras()
             self.refresh_status_dashboard()
+            self.map_canvas.set_device_catalog(self.camera_manager.get_all_cameras(self.current_layout_id))
             self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
             self.status_bar.showMessage(t("status.device_updated", name=new_camera.name), 5000)
         else:
@@ -41,7 +42,12 @@ class AppCameraActions:
         if file_path:
             count = self.camera_manager.import_cameras_csv(file_path, self.current_layout_id)
             self._refresh_camera_panel()
+            self.map_canvas.set_device_catalog(self.camera_manager.get_all_cameras(self.current_layout_id))
+            for camera in self.camera_manager.get_placed_cameras(self.current_layout_id):
+                self.map_canvas.refresh_camera_item(camera)
+            self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
             self.refresh_ping_cameras()
+            self.refresh_status_dashboard()
             self.status_bar.showMessage(t("status.csv_imported", count=count), 5000)
 
     def export_cameras_csv(self) -> None:
@@ -55,8 +61,11 @@ class AppCameraActions:
             self.status_bar.showMessage(t("status.csv_exported"), 5000)
 
     def _refresh_camera_panel(self) -> None:
+        cameras = self.camera_manager.get_all_cameras(self.current_layout_id)
         self.camera_panel.set_cameras(
-            self.camera_manager.get_all_cameras(self.current_layout_id),
+            cameras,
             {item.id for item in self.camera_manager.get_placed_cameras(self.current_layout_id)},
             self.camera_manager.get_device_links(self.current_layout_id),
         )
+        if hasattr(self, "map_canvas"):
+            self.map_canvas.set_device_catalog(cameras)

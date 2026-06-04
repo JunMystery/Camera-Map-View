@@ -45,7 +45,7 @@
     <string key="action.show_name">Tên</string>
     <string key="action.show_zone">Vùng</string>
     <string key="action.show_ip">IP</string>
-    <string key="action.show_dvr">DVR gốc</string>
+    <string key="action.show_dvr">IP thiết bị cha</string>
     <string key="menu.file">Tệp tin</string>
     <string key="menu.action">Thao tác</string>
     <string key="menu.view">Hiển thị</string>
@@ -122,6 +122,9 @@
     <string key="dialog.edit_text.title">Sửa chữ</string>
     <string key="dialog.choose_color.title">Chọn màu vẽ</string>
     <string key="dialog.choose_fill_color.title">Chọn màu tô</string>
+    <string key="dialog.parent_picker.title">Đổi thiết bị cha</string>
+    <string key="dialog.parent_picker.search">Tìm thiết bị...</string>
+    <string key="dialog.parent_picker.empty">Không có thiết bị cha khả dụng.</string>
     <string key="dialog.confirm_unload_map.title">Gỡ bản đồ nền?</string>
     <string key="dialog.confirm_unload_map.body">Bản đồ nền hiện tại sẽ bị gỡ khỏi canvas. Tiếp tục?</string>
     <string key="dialog.confirm_exit.title">Thoát ứng dụng?</string>
@@ -144,16 +147,17 @@
     <string key="camera_panel.title">Danh sách thiết bị chưa đặt</string>
     <string key="camera_panel.title_unplaced">Danh sách thiết bị chưa đặt</string>
     <string key="camera_panel.title_placed">Danh sách thiết bị đã đặt</string>
-    <string key="camera_panel.search">Tìm thiết bị theo tên, IP, DVR, vùng...</string>
+    <string key="camera_panel.search">Tìm thiết bị theo tên, IP, IP thiết bị cha, vùng...</string>
     <string key="camera_panel.unplaced">Chưa đặt</string>
     <string key="camera_panel.placed">Đã đặt</string>
     <string key="camera_panel.add">Thêm</string>
     <string key="camera_panel.edit">Sửa</string>
     <string key="camera_panel.delete">Xóa</string>
+    <string key="camera_panel.change_parent">Đổi thiết bị cha...</string>
     <string key="camera_panel.ungroup">Bỏ nhóm</string>
     <string key="camera_panel.import">Nhập CSV</string>
     <string key="camera_panel.export">Xuất CSV</string>
-    <string key="camera_panel.no_dvr">Chưa gán DVR</string>
+    <string key="camera_panel.no_dvr">Chưa có IP thiết bị cha</string>
     <string key="camera_panel.online_group">Online</string>
     <string key="camera_panel.offline_group">Offline</string>
     <string key="camera_panel.item">📹 {name}
@@ -166,7 +170,7 @@
     <string key="camera.tooltip">Tên: {name}
 Vùng: {zone}
 IP: {ip_address}:{port}
-DVR gốc: {dvr_origin}
+IP thiết bị cha: {parent_ip}
 Loại: {camera_type}
 Góc: {rotation}°
 Trạng thái: {status}
@@ -186,7 +190,7 @@ Ghi chú: {notes}</string>
     <string key="camera_dialog.type">Loại camera</string>
     <string key="camera_dialog.fov">FOV</string>
     <string key="camera_dialog.zone">Vùng</string>
-    <string key="camera_dialog.dvr_origin">DVR gốc</string>
+    <string key="camera_dialog.dvr_origin">IP thiết bị cha</string>
     <string key="camera_dialog.rotation">Góc quay</string>
     <string key="camera_dialog.status">Trạng thái</string>
     <string key="camera_dialog.notes">Ghi chú</string>
@@ -239,7 +243,7 @@ Loại: {device_kind}
 Variant: {variant}
 IP: {ip_address}:{port}
 Vùng: {zone}
-DVR gốc: {dvr_origin}
+IP thiết bị cha: {parent_ip}
 Góc: {rotation}
 FOV: {fov_degrees}
 Trạng thái: {status}
@@ -250,7 +254,7 @@ Loại: {device_kind}
 Variant: {variant}
 IP: {ip_address}:{port}
 Vùng: {zone}
-DVR gốc: {dvr_origin}
+IP thiết bị cha: {parent_ip}
 Trạng thái: {status}
 Ping: {ping}
 Ghi chú: {notes}</string>
@@ -317,6 +321,7 @@ Ghi chú: {notes}</string>
     <string key="status.device_link_skipped">Không thể tạo liên kết thiết bị.</string>
     <string key="status.device_link_removed">Đã gỡ kết nối thiết bị.</string>
     <string key="status.device_link_remove_failed">Không thể gỡ kết nối thiết bị.</string>
+    <string key="status.device_parent_changed">Đã đổi thiết bị cha.</string>
     <string key="status.background_map_missing">Chưa tải bản đồ nền.</string>
     <string key="seed.cam_01.name">Cổng Chính (Main Gate)</string>
     <string key="seed.cam_01.notes">Góc nhìn bãi xe chính</string>

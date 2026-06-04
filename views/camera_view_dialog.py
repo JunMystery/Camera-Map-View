@@ -1,5 +1,6 @@
 """Camera properties dialog for editing camera metadata."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -40,6 +41,7 @@ class CameraPropertiesDialog(QDialog):
         available_devices: list[Camera] | None = None,
         linked_device_ids: list[str] | None = None,
         incoming_device_ids: list[str] | None = None,
+        parent_ip_lookup: Callable[[str], str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.camera = camera
@@ -50,6 +52,7 @@ class CameraPropertiesDialog(QDialog):
         self.checked_link_ids = set(self.linked_device_ids)
         self.incoming_device_ids = set(incoming_device_ids or [])
         self.removed_incoming_device_ids: set[str] = set()
+        self.parent_ip_lookup = parent_ip_lookup or (lambda _device_id: "")
 
         self.setModal(True)
         self.resize(540, 560)
@@ -75,7 +78,6 @@ class CameraPropertiesDialog(QDialog):
         self.fov_input = QComboBox(self)
         self.fov_input.currentIndexChanged.connect(self._update_save_state)
         self.zone_input = QLineEdit(camera.zone, self)
-        self.dvr_input = QLineEdit(camera.dvr_origin, self)
         self.ping_input = QCheckBox(self)
         self.ping_input.setChecked(camera.ping_enabled)
 
@@ -114,7 +116,6 @@ class CameraPropertiesDialog(QDialog):
         self.fov_label = QLabel(self)
         self.kind_label = QLabel(self)
         self.zone_label = QLabel(self)
-        self.dvr_label = QLabel(self)
         self.status_label = QLabel(self)
         self.notes_label = QLabel(self)
         self.location_image_label = QLabel(self)
@@ -146,7 +147,7 @@ class CameraPropertiesDialog(QDialog):
             last_check=self.camera.last_check,
             notes=self.notes_input.toPlainText().strip(),
             zone=self.zone_input.text().strip(),
-            dvr_origin=self.dvr_input.text().strip(),
+            dvr_origin=self.camera.dvr_origin,
             layer_id=self.camera.layer_id,
             location_image_path=location_image_path,
             device_kind=str(self.kind_input.currentData() or DEVICE_KIND_CAMERA),
@@ -170,7 +171,6 @@ class CameraPropertiesDialog(QDialog):
         form.addRow(self.type_label, self.variant_input)
         form.addRow(self.fov_label, self.fov_input)
         form.addRow(self.zone_label, self.zone_input)
-        form.addRow(self.dvr_label, self.dvr_input)
 
         form.addRow(self.status_label, self._status_ping_row())
         form.addRow(self.notes_label, self.notes_input)
@@ -224,6 +224,7 @@ class CameraPropertiesDialog(QDialog):
             self.available_devices,
             self.checked_link_ids,
             self.incoming_device_ids,
+            self.parent_ip_lookup,
             self,
         )
         if dialog.exec() == dialog.DialogCode.Accepted:
@@ -307,7 +308,6 @@ class CameraPropertiesDialog(QDialog):
         self.type_label.setText(t("device_dialog.variant"))
         self.fov_label.setText(t("camera_dialog.fov"))
         self.zone_label.setText(t("camera_dialog.zone"))
-        self.dvr_label.setText(t("camera_dialog.dvr_origin"))
         self.status_label.setText(t("camera_dialog.status"))
         self.ping_input.setText(t("device_dialog.ping_enabled"))
         self.notes_label.setText(t("camera_dialog.notes"))
