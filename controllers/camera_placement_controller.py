@@ -70,33 +70,37 @@ class CameraPlacementController:
         """Load persisted cameras into the sidebar and map."""
         if layout_id is not None:
             self.current_layout_id = layout_id
-        self.map_canvas.clear_map_items()
-        if not self.current_layout_id or self.camera_manager.get_layout(self.current_layout_id) is None:
-            self.map_canvas.set_canvas_layers([], "")
-            self.camera_panel.set_cameras([], set(), [])
-            self.map_canvas.set_device_links([])
+        self.map_canvas.suspend_layer_refresh()
+        try:
+            self.map_canvas.clear_map_items()
+            if not self.current_layout_id or self.camera_manager.get_layout(self.current_layout_id) is None:
+                self.map_canvas.set_canvas_layers([], "")
+                self.camera_panel.set_cameras([], set(), [])
+                self.map_canvas.set_device_links([])
+                self._refresh_dashboard()
+                return
+            self.camera_manager.seed_default_cameras(self.current_layout_id)
+            self.map_canvas.set_canvas_layers(self.camera_manager.get_layers(self.current_layout_id), self.current_layout_id)
+            all_cameras = self.camera_manager.get_all_cameras(self.current_layout_id)
+            placed_cameras = self.camera_manager.get_placed_cameras(self.current_layout_id)
+            device_links = self.camera_manager.get_device_links(self.current_layout_id)
+            self.map_canvas.set_device_catalog(all_cameras)
+            self.camera_panel.set_cameras(
+                all_cameras,
+                {camera.id for camera in placed_cameras},
+                device_links,
+            )
+
+            for camera in placed_cameras:
+                self.map_canvas.add_camera_item(camera)
+
+            for shape in self.camera_manager.get_drawing_shapes(self.current_layout_id):
+                self.map_canvas.add_drawing_shape(shape)
+
+            self.map_canvas.set_device_links(device_links)
             self._refresh_dashboard()
-            return
-        self.camera_manager.seed_default_cameras(self.current_layout_id)
-        self.map_canvas.set_canvas_layers(self.camera_manager.get_layers(self.current_layout_id), self.current_layout_id)
-        all_cameras = self.camera_manager.get_all_cameras(self.current_layout_id)
-        placed_cameras = self.camera_manager.get_placed_cameras(self.current_layout_id)
-        device_links = self.camera_manager.get_device_links(self.current_layout_id)
-        self.map_canvas.set_device_catalog(all_cameras)
-        self.camera_panel.set_cameras(
-            all_cameras,
-            {camera.id for camera in placed_cameras},
-            device_links,
-        )
-
-        for camera in placed_cameras:
-            self.map_canvas.add_camera_item(camera)
-
-        for shape in self.camera_manager.get_drawing_shapes(self.current_layout_id):
-            self.map_canvas.add_drawing_shape(shape)
-
-        self.map_canvas.set_device_links(device_links)
-        self._refresh_dashboard()
+        finally:
+            self.map_canvas.resume_layer_refresh()
 
     def handle_camera_dropped(self, camera_id: str, x: float, y: float) -> None:
         """Place a sidebar camera onto the map at the drop coordinates."""

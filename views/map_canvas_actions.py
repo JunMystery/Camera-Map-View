@@ -79,7 +79,7 @@ class MapCanvasActions:
         self.background_map_visible = visible
         if self.background_item is not None:
             self.background_item.setVisible(visible and self.layer_visibility.get(BACKGROUND_LAYER, True))
-        self.layers_changed.emit()
+        self._emit_layers_changed()
 
     def is_background_map_visible(self) -> bool:
         """Return whether the background map overlay is enabled."""
@@ -186,7 +186,7 @@ class MapCanvasActions:
                 self.camera_deleted.emit(camera_id)
                 deleted += 1
         if deleted:
-            self.layers_changed.emit()
+            self._emit_layers_changed()
         self._commit_history_step("delete_selected")
         return deleted
 
@@ -203,7 +203,7 @@ class MapCanvasActions:
             self.camera_rotated.emit(item.camera.id, item.camera.rotation)
             rotated += 1
         if rotated:
-            self.layers_changed.emit()
+            self._emit_layers_changed()
         self._commit_history_step("camera_rotate")
         return rotated
 
@@ -222,17 +222,18 @@ class MapCanvasActions:
         self.camera_items.clear()
         self.item_default_flags.clear()
         self.pan_item_flags.clear()
-        self.layers_changed.emit()
+        self._emit_layers_changed()
 
     def get_layer_states(self) -> list[LayerState]:
         """Return the current grouped layer states for UI panels."""
+        items_by_layer = self._items_by_layer()
         return [
             LayerState(
                 layer_id=layer.id,
                 display_name=self.layer_display_names.get(layer.id, layer.name),
                 visible=self.layer_visibility.get(layer.id, layer.visible),
                 locked=self.layer_locked.get(layer.id, layer.locked),
-                item_count=len(self._items_for_layer(layer.id)),
+                item_count=len(items_by_layer.get(layer.id, [])),
                 active=layer.id == self.active_layer_id and not layer.is_group,
                 group_id=layer.group_id,
                 is_group=layer.is_group,
@@ -273,7 +274,7 @@ class MapCanvasActions:
         changed = self.active_layer_id != layer_id
         self.active_layer_id = layer_id
         if changed:
-            self.layers_changed.emit()
+            self._emit_layers_changed()
         return True
 
     def set_layer_visible(self, layer_id: str, visible: bool) -> None:
@@ -288,7 +289,7 @@ class MapCanvasActions:
             targets = [item for child_id in child_ids for item in self._items_for_layer(child_id)]
         for item in targets:
             self._apply_item_visibility(item)
-        self.layers_changed.emit()
+        self._emit_layers_changed()
 
     def set_layer_locked(self, layer_id: str, locked: bool) -> None:
         """Enable or disable selection and movement for a layer."""
@@ -301,7 +302,7 @@ class MapCanvasActions:
         for item in targets:
             self._set_item_locked(item, self._item_effective_locked(item))
         self._set_item_interaction_suspended(getattr(self, "item_interaction_suspended", False))
-        self.layers_changed.emit()
+        self._emit_layers_changed()
 
     def select_layer_items(self, layer_id: str) -> int:
         """Select all visible, unlocked items in a layer."""
@@ -342,7 +343,7 @@ class MapCanvasActions:
                 self.drawing_deleted.emit(str(object_id))
             deleted += 1
         if deleted:
-            self.layers_changed.emit()
+            self._emit_layers_changed()
         return deleted
 
     def rename_layer(self, layer_id: str, display_name: str) -> None:
@@ -350,7 +351,7 @@ class MapCanvasActions:
         layer_id = self._resolve_layer_id(layer_id)
         if display_name.strip():
             self.layer_display_names[layer_id] = display_name.strip()
-            self.layers_changed.emit()
+            self._emit_layers_changed()
 
     def rename_layer_object(self, object_type: str, object_id: str, display_name: str) -> bool:
         """Rename one object row in the Layers panel without changing layer membership."""
@@ -374,7 +375,7 @@ class MapCanvasActions:
         else:
             return False
         self.object_renamed.emit(object_type, object_id, display_name)
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         self._commit_history_step("object_rename")
         return True
 
@@ -389,7 +390,7 @@ class MapCanvasActions:
             item.camera.object_locked = locked
         self._set_item_locked(item, self._item_effective_locked(item))
         self.object_locked_changed.emit(object_type, object_id, locked)
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         self._commit_history_step("object_lock")
         return True
 
@@ -406,7 +407,7 @@ class MapCanvasActions:
             item.setSelected(False)
         self._apply_item_visibility(item)
         self.object_visibility_changed.emit(object_type, object_id, visible)
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         self._commit_history_step("object_visibility")
         return True
 
@@ -433,17 +434,18 @@ class MapCanvasActions:
             self.annotation_layer_order[current_index],
         )
         self.apply_layer_z_values()
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         return True
 
     def apply_layer_z_values(self) -> None:
         """Apply standard z-values to all managed scene items."""
-        for item in self._items_for_layer(BACKGROUND_LAYER):
+        items_by_layer = self._items_by_layer()
+        for item in items_by_layer.get(BACKGROUND_LAYER, []):
             item.setZValue(-30)
-        for item in self._items_for_layer(GRID_LAYER):
+        for item in items_by_layer.get(GRID_LAYER, []):
             item.setZValue(-20)
         for index, layer_id in enumerate(self.annotation_layer_order):
-            for item in self._items_for_layer(layer_id):
+            for item in items_by_layer.get(layer_id, []):
                 item.setZValue(index * 1000 + int(item.data(7) or 0))
 
     def move_layer_object(self, object_type: str, object_id: str, direction: int) -> bool:
@@ -475,7 +477,7 @@ class MapCanvasActions:
                 candidate.camera.z_index = index
             self.object_z_changed.emit(object_type_value, object_id_value, index)
         self.apply_layer_z_values()
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         self._commit_history_step("object_z")
         return True
 
@@ -507,7 +509,7 @@ class MapCanvasActions:
                 candidate.camera.z_index = index
             self.object_z_changed.emit(object_type_value, object_id_value, index)
         self.apply_layer_z_values()
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         self._commit_history_step("object_z")
         return True
 
@@ -544,16 +546,19 @@ class MapCanvasActions:
                 moved += 1
         self.apply_layer_z_values()
         if moved:
-            self.layers_changed.emit()
+            self._emit_layers_changed()
         self._commit_history_step("selection_layer_move")
         return moved
 
-    def select_layer_object(self, object_type: str, object_id: str) -> bool:
+    def select_layer_object(self, object_type: str, object_id: str, clear_existing: bool = True) -> bool:
         """Select one canvas object by id."""
-        self.scene.clearSelection()
+        if clear_existing:
+            self.scene.clearSelection()
         item = self._find_layer_object_item(object_type, object_id)
         if item is None or self._item_effective_locked(item) or not item.isVisible():
             return False
+        if not item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
+            item.setFlags(item.flags() | item.GraphicsItemFlag.ItemIsSelectable)
         item.setSelected(True)
         return True
 
@@ -587,7 +592,7 @@ class MapCanvasActions:
             self._commit_history_step("object_layer_move")
             return False
         self.apply_layer_z_values()
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         self._commit_history_step("object_layer_move")
         return True
 
@@ -728,11 +733,20 @@ class MapCanvasActions:
 
     def _items_for_layer(self, layer_id: str) -> list[Any]:
         layer_id = self._resolve_layer_id(layer_id)
-        if layer_id == BACKGROUND_LAYER:
-            return [self.background_item] if self.background_item is not None else []
-        if layer_id == GRID_LAYER:
-            return list(self.grid_items)
-        return [item for item in self.scene.items() if item.data(2) == layer_id]
+        return self._items_by_layer().get(layer_id, [])
+
+    def _items_by_layer(self) -> dict[str, list[Any]]:
+        items_by_layer: dict[str, list[Any]] = {}
+        if self.background_item is not None:
+            items_by_layer.setdefault(BACKGROUND_LAYER, []).append(self.background_item)
+        if self.grid_items:
+            items_by_layer.setdefault(GRID_LAYER, []).extend(self.grid_items)
+        for item in self.scene.items():
+            layer_id = item.data(2)
+            if layer_id in {None, BACKGROUND_LAYER, GRID_LAYER}:
+                continue
+            items_by_layer.setdefault(str(layer_id), []).append(item)
+        return items_by_layer
 
     def _resolve_layer_id(self, layer_id: str) -> str:
         if layer_id in self.layer_display_names or layer_id in {BACKGROUND_LAYER, GRID_LAYER}:

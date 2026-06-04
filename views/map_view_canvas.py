@@ -36,9 +36,6 @@ class DeviceLinkItem(QGraphicsLineItem):
         self.mode_getter = mode_getter
         self.link_role = link_role if link_role == "upstream" else "downstream"
         self._dash_offset = 0.0
-        self._timer = QTimer()
-        self._timer.timeout.connect(self._advance_dash)
-        self._timer.start(90)
         self._apply_pen()
         self.setZValue(45)
         self.setData(0, link.id)
@@ -58,13 +55,14 @@ class DeviceLinkItem(QGraphicsLineItem):
     def contextMenuEvent(self, event: Any) -> None:
         event.ignore()
 
-    def stop_animation(self) -> None:
-        """Stop the link animation before the scene removes the item."""
-        self._timer.stop()
-
-    def _advance_dash(self) -> None:
-        self._dash_offset = (self._dash_offset + 1.0) % 12.0
+    def set_dash_offset(self, offset: float) -> None:
+        """Update the shared dash animation phase."""
+        self._dash_offset = offset % 12.0
         self._apply_pen()
+
+    def stop_animation(self) -> None:
+        """Compatibility hook for scene cleanup."""
+        return
 
     def _apply_pen(self) -> None:
         color = "#f59e0b" if self.link_role == "upstream" else "#38bdf8"
@@ -107,7 +105,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate)
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, True)
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing, True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -144,6 +142,11 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.pending_device_link_source_id = ""
         self.device_links: list[DeviceLink] = []
         self.device_link_items: list[DeviceLinkItem] = []
+        self._links_by_source: dict[str, list[DeviceLink]] = {}
+        self._links_by_target: dict[str, list[DeviceLink]] = {}
+        self._link_dash_offset = 0.0
+        self.link_animation_timer = QTimer(self)
+        self.link_animation_timer.timeout.connect(self._advance_link_dash)
         self.drawing_tool = DrawingTool(self.snap_point)
         self.camera_info_visibility = {"name": False, "zone": False, "ip": False}
         self.current_layout_id = "default"
@@ -160,6 +163,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self._interaction_history_active = False
         self._priority_raised_item: QGraphicsItem | None = None
         self._priority_raised_z = 0.0
+        self._layers_changed_suspend_count = 0
+        self._layers_changed_pending = False
         self.topology_focus_id = ""
         self.topology_highlight_ids: set[str] = set()
         self.topology_upstream_link_ids: set[str] = set()
@@ -203,7 +208,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self._set_item_locked(item, self._item_effective_locked(item))
         self._sync_item_interaction_flags(item)
         self.apply_layer_z_values()
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         return item
 
     def set_light_theme(self, enabled: bool) -> None:
@@ -247,7 +252,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.apply_layer_z_values()
         if emit_created:
             self.drawing_created.emit(shape)
-        self.layers_changed.emit()
+        self._emit_layers_changed()
         if emit_created:
             self._commit_history_step("drawing_create")
         return item
@@ -267,7 +272,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
             self.active_layer_id = self.annotation_layer_order[0] if self.annotation_layer_order else ""
         self.apply_layer_z_values()
         self._set_item_interaction_suspended(self.drawing_mode == DrawingMode.PAN)
-        self.layers_changed.emit()
+        self._emit_layers_changed()
 
     def _default_layer_id(self, kind: str) -> str:
         return f"layer_{self.current_layout_id}_{kind}"
@@ -297,6 +302,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     def set_device_links(self, links: list[DeviceLink]) -> None:
         """Replace topology links used for temporary canvas overlays."""
         self.device_links = list(links)
+        self._rebuild_device_link_index()
         for item in self.camera_items.values():
             item.update_tooltip()
             item.update()
@@ -333,6 +339,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self._remove_device_link_items()
         selected_id = self._selected_device_id()
         if not selected_id:
+            self._sync_link_animation_timer()
             return
         downstream_links = self._downstream_links(selected_id)
         upstream_links = self._upstream_path_links(selected_id)
@@ -356,6 +363,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
             )
             self.scene.addItem(line)
             self.device_link_items.append(line)
+        self._sync_link_animation_timer()
 
     def highlight_device_topology(self, device_id: str, center: bool = True) -> bool:
         """Select one device and highlight its upstream path plus downstream subtree."""
@@ -464,7 +472,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
             self.pan_item_flags.pop(item, None)
             self.item_default_flags.pop(item, None)
             self.scene.removeItem(item)
-            self.layers_changed.emit()
+            self._emit_layers_changed()
             self.refresh_device_links()
 
     def dragEnterEvent(self, event: Any) -> None:
@@ -507,6 +515,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         """Render the whole visible scene to an image file without UI chrome or selection handles."""
         rect = self.scene.sceneRect()
         if rect.isNull() or rect.width() <= 0 or rect.height() <= 0:
+            return False
+        if rect.width() * rect.height() > 80_000_000:
             return False
 
         image = QImage(int(rect.width()), int(rect.height()), QImage.Format.Format_ARGB32)
@@ -800,43 +810,51 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     def _downstream_links(self, target_id: str) -> list[DeviceLink]:
         visited = {target_id}
         related: list[DeviceLink] = []
-        changed = True
-        while changed:
-            changed = False
-            for link in self.device_links:
-                if link in related or link.target_device_id not in visited:
+        queue = [target_id]
+        seen_links: set[str] = set()
+        while queue:
+            current_target = queue.pop(0)
+            for link in self._links_by_target.get(current_target, []):
+                if link.id in seen_links:
                     continue
+                seen_links.add(link.id)
                 related.append(link)
                 if link.source_device_id not in visited:
                     visited.add(link.source_device_id)
-                    changed = True
+                    queue.append(link.source_device_id)
         return related
 
     def _upstream_path_links(self, source_id: str) -> list[DeviceLink]:
-        paths = self._upstream_paths(source_id, set())
-        if not paths:
-            return []
-        paths.sort(key=lambda path: (-len(path), [link.target_device_id for link in path], [link.source_device_id for link in path]))
-        return paths[0]
+        return self._best_upstream_path(source_id, set(), {})
 
-    def _upstream_paths(self, source_id: str, visited: set[str]) -> list[list[DeviceLink]]:
+    def _best_upstream_path(
+        self,
+        source_id: str,
+        visited: set[str],
+        memo: dict[str, list[DeviceLink]],
+    ) -> list[DeviceLink]:
         if source_id in visited:
-            return [[]]
+            return []
+        if source_id in memo:
+            return list(memo[source_id])
         outgoing = sorted(
-            [link for link in self.device_links if link.source_device_id == source_id],
+            self._links_by_source.get(source_id, []),
             key=lambda item: (item.target_device_id, item.source_device_id, item.id),
         )
         if not outgoing:
+            memo[source_id] = []
             return []
-        paths: list[list[DeviceLink]] = []
         next_visited = {*visited, source_id}
+        best: list[DeviceLink] = []
         for link in outgoing:
-            child_paths = self._upstream_paths(link.target_device_id, next_visited)
-            if not child_paths:
-                paths.append([link])
-            else:
-                paths.extend([[link, *path] for path in child_paths])
-        return paths
+            candidate = [link, *self._best_upstream_path(link.target_device_id, next_visited, memo)]
+            if len(candidate) > len(best) or (
+                len(candidate) == len(best)
+                and [item.target_device_id for item in candidate] < [item.target_device_id for item in best]
+            ):
+                best = candidate
+        memo[source_id] = list(best)
+        return best
 
     def _remove_device_link_items(self) -> None:
         for item in self.device_link_items:
@@ -844,4 +862,53 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
             if item.scene() is self.scene:
                 self.scene.removeItem(item)
         self.device_link_items.clear()
+        self._sync_link_animation_timer()
+
+    def _emit_layers_changed(self) -> None:
+        """Emit the expensive layer refresh signal, or defer it during bulk work."""
+        if self._layers_changed_suspend_count > 0:
+            self._layers_changed_pending = True
+            return
+        self.layers_changed.emit()
+
+    def suspend_layer_refresh(self) -> None:
+        """Suspend LayersPanel rebuilds while loading many scene items."""
+        self._layers_changed_suspend_count += 1
+
+    def resume_layer_refresh(self) -> None:
+        """Resume LayersPanel rebuilds and flush one pending update."""
+        self._layers_changed_suspend_count = max(0, self._layers_changed_suspend_count - 1)
+        if self._layers_changed_suspend_count == 0 and self._layers_changed_pending:
+            self._layers_changed_pending = False
+            self.layers_changed.emit()
+
+    def notify_geometry_changed(self) -> None:
+        """Refresh lightweight overlays after item movement without rebuilding layers."""
+        self._update_device_link_item_positions()
+
+    def _rebuild_device_link_index(self) -> None:
+        self._links_by_source = {}
+        self._links_by_target = {}
+        for link in self.device_links:
+            self._links_by_source.setdefault(link.source_device_id, []).append(link)
+            self._links_by_target.setdefault(link.target_device_id, []).append(link)
+
+    def _advance_link_dash(self) -> None:
+        self._link_dash_offset = (self._link_dash_offset + 1.0) % 12.0
+        for item in self.device_link_items:
+            item.set_dash_offset(self._link_dash_offset)
+
+    def _update_device_link_item_positions(self) -> None:
+        for link_item in self.device_link_items:
+            source = self.camera_items.get(link_item.link.source_device_id)
+            target = self.camera_items.get(link_item.link.target_device_id)
+            if source is None or target is None:
+                continue
+            link_item.setLine(source.pos().x(), source.pos().y(), target.pos().x(), target.pos().y())
+
+    def _sync_link_animation_timer(self) -> None:
+        if self.device_link_items and not self.link_animation_timer.isActive():
+            self.link_animation_timer.start(90)
+        elif not self.device_link_items and self.link_animation_timer.isActive():
+            self.link_animation_timer.stop()
 from views.bounded_graphics_scene import BoundedGraphicsScene

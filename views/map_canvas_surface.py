@@ -3,11 +3,37 @@
 import os
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QBrush, QColor, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem
 
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
 from views.ui_theme import CANVAS_BG_DARK, CANVAS_BG_LIGHT, GRID_DARK, GRID_LIGHT, PRIMARY
+
+
+class GridLayerItem(QGraphicsRectItem):
+    """Single scene item that paints the whole canvas grid."""
+
+    def __init__(self, width: int, height: int, grid_size: int, pen: QPen, border_pen: QPen) -> None:
+        super().__init__(0, 0, width, height)
+        self.grid_size = max(1, int(grid_size))
+        self.grid_pen = QPen(pen)
+        self.border_pen = QPen(border_pen)
+        self.setPen(self.grid_pen)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        rect = self.rect()
+        painter.setPen(self.grid_pen)
+        x = 0
+        while x <= rect.width():
+            painter.drawLine(int(x), 0, int(x), int(rect.height()))
+            x += self.grid_size
+        y = 0
+        while y <= rect.height():
+            painter.drawLine(0, int(y), int(rect.width()), int(y))
+            y += self.grid_size
+        painter.setPen(self.border_pen)
+        painter.drawRect(rect)
 
 
 class MapCanvasSurface:
@@ -88,15 +114,12 @@ class MapCanvasSurface:
     def _add_grid_items(self, width: int, height: int, grid_size: int) -> None:
         grid_color = QColor(GRID_LIGHT) if self.light_theme else QColor(GRID_DARK)
         pen = QPen(grid_color, 1, Qt.PenStyle.DotLine)
-        for x in range(0, width, grid_size):
-            self.grid_items.append(self.scene.addLine(x, 0, x, height, pen))
-        for y in range(0, height, grid_size):
-            self.grid_items.append(self.scene.addLine(0, y, width, y, pen))
         border_pen = QPen(QColor(PRIMARY), 2, Qt.PenStyle.SolidLine)
-        self.grid_items.append(self.scene.addRect(0, 0, width, height, border_pen))
+        self.grid_items.append(GridLayerItem(width, height, grid_size, pen, border_pen))
         for item in self.grid_items:
             item.setData(2, GRID_LAYER)
             item.setVisible(self.grid_visible)
+            self.scene.addItem(item)
         self.apply_layer_z_values()
 
     def remove_canvas_bounds_item(self) -> None:

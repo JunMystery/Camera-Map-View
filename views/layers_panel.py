@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QTimer, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -211,9 +211,18 @@ class LayersPanel(QWidget):
         self._layer_toggle_buttons: dict[str, QToolButton] = {}
         self._icon_color = TEXT_ON_DARK
         self._active_row_color = DARK_ACTIVE_ROW
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.timeout.connect(self.refresh)
         self._build_ui()
-        self.canvas.layers_changed.connect(self.refresh)
+        self.canvas.layers_changed.connect(self._schedule_refresh)
         self.refresh()
+
+    def _schedule_refresh(self) -> None:
+        """Coalesce repeated canvas layer signals into one tree rebuild."""
+        if self._refreshing:
+            return
+        self._refresh_timer.start(0)
 
     def refresh(self) -> None:
         """Rebuild layer and object rows from canvas state."""
@@ -410,8 +419,10 @@ class LayersPanel(QWidget):
                 self.canvas.set_active_layer(list(layer_ids_to_activate)[-1])
             
             # Select all objects on canvas
+            if objects_to_select or layer_ids_to_activate:
+                self.canvas.scene.clearSelection()
             for obj_type, obj_id in objects_to_select:
-                self.canvas.select_layer_object(obj_type, obj_id)
+                self.canvas.select_layer_object(obj_type, obj_id, clear_existing=False)
         finally:
             self._refreshing = False
 

@@ -423,12 +423,9 @@ class CameraItem(QGraphicsItem):
         if self.scene() is None or not self.scene().views():
             return
         view = self.scene().views()[0]
-        signal = getattr(view, "layers_changed", None)
-        if signal is not None:
-            signal.emit()
-        refresh_links = getattr(view, "refresh_device_links", None)
-        if callable(refresh_links):
-            refresh_links()
+        notify_geometry = getattr(view, "notify_geometry_changed", None)
+        if callable(notify_geometry):
+            notify_geometry()
 
     def _paint_device_body(self, painter: QPainter, is_selected: bool) -> None:
         if self.topology_highlight_role:
