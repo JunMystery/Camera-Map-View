@@ -216,6 +216,12 @@ class LayersPanel(QWidget):
         self._refresh_timer.timeout.connect(self.refresh)
         self._build_ui()
         self.canvas.layers_changed.connect(self._schedule_refresh)
+        # Listen for more specific canvas selection events
+        try:
+            self.canvas.active_layer_changed.connect(self._on_canvas_active_layer_changed)
+            self.canvas.layer_object_selected.connect(self._on_canvas_layer_object_selected)
+        except Exception:
+            pass
         self.refresh()
 
     def _schedule_refresh(self) -> None:
@@ -369,11 +375,84 @@ class LayersPanel(QWidget):
 
     def apply_theme(self, light_theme: bool) -> None:
         """Apply the shared application palette to the panel."""
+        self._light_theme = bool(light_theme)
         self._icon_color = LIGHT_TEXT if light_theme else TEXT_ON_DARK
         self._active_row_color = LIGHT_ACTIVE_ROW if light_theme else DARK_ACTIVE_ROW
         self.setStyleSheet(layers_panel_stylesheet(light_theme))
         self._refresh_icons()
         self.refresh()
+
+    def _clear_object_selection_indicators(self) -> None:
+        """Clear any visual indicators applied to object rows."""
+        for index in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(index)
+            for col in range(self.tree.columnCount()):
+                top.setBackground(col, QBrush())
+            for child_index in range(top.childCount()):
+                child = top.child(child_index)
+                for col in range(self.tree.columnCount()):
+                    child.setBackground(col, QBrush())
+
+    def _apply_object_selection_indicator(self, item: QTreeWidgetItem) -> None:
+        """Apply a highlighted background to one object row."""
+        if item is None:
+            return
+        # Choose a selection color that contrasts with the current theme
+        sel_color = QColor("#e6f0ff") if getattr(self, "_light_theme", False) else QColor("#1e3a8a")
+        for col in range(self.tree.columnCount()):
+            item.setBackground(col, QBrush(sel_color))
+
+    def _on_canvas_active_layer_changed(self, layer_id: str) -> None:
+        """Update the tree selection when the canvas active layer changes."""
+        if self._refreshing:
+            return
+        self._refreshing = True
+        self.tree.blockSignals(True)
+        try:
+            self.tree.clearSelection()
+            target_item: QTreeWidgetItem | None = None
+            for index in range(self.tree.topLevelItemCount()):
+                top = self.tree.topLevelItem(index)
+                # check top-level layer or group
+                if top.data(0, ROLE_TYPE) in {"layer", "group"} and str(top.data(0, ROLE_LAYER_ID)) == layer_id:
+                    target_item = top
+                    break
+                for child_index in range(top.childCount()):
+                    child = top.child(child_index)
+                    if child.data(0, ROLE_TYPE) == "layer" and str(child.data(0, ROLE_LAYER_ID)) == layer_id:
+                        target_item = child
+                        break
+                if target_item is not None:
+                    break
+            if target_item is not None:
+                target_item.setSelected(True)
+                self.tree.setCurrentItem(target_item)
+        finally:
+            self.tree.blockSignals(False)
+            self._refreshing = False
+
+    def _on_canvas_layer_object_selected(self, object_type: str, object_id: str) -> None:
+        """Highlight the object row that corresponds to a canvas selection."""
+        # object_type and object_id may be empty strings to indicate cleared selection
+        self._refreshing = True
+        self.tree.blockSignals(True)
+        try:
+            self._clear_object_selection_indicators()
+            if not object_type or not object_id:
+                # Clear tree selection silently
+                self.clear_selection_silently()
+                return
+            target = self._find_object_tree_item(object_type, object_id)
+            if target is None:
+                # nothing to highlight
+                return
+            # Select visually and apply highlight
+            target.setSelected(True)
+            self.tree.setCurrentItem(target)
+            self._apply_object_selection_indicator(target)
+        finally:
+            self.tree.blockSignals(False)
+            self._refreshing = False
 
     def _handle_selection(self) -> None:
         if self._refreshing:
