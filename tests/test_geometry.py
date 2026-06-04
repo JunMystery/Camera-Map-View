@@ -180,7 +180,7 @@ def test_escape_cancels_camera_resize_and_rotation() -> None:
     assert not item.is_rotating
     assert item.camera.rotation == 20.0
 
-    item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(34, 28), QPointF(100, 100)))
+    item.mousePressEvent(_ItemMouseEvent(Qt.MouseButton.LeftButton, QPointF(50, 50), QPointF(100, 100)))
     item._apply_resize_from_distance(200.0)
     assert item.scale() != 1.0
 
@@ -675,9 +675,9 @@ def test_camera_item_resize_handle_updates_scale() -> None:
     item = canvas.add_camera_item(Camera("cam_test", "Lobby", "10.0.0.10"))
 
     item.setSelected(True)
-    assert item._is_on_resize_handle(QPointF(34, 28))
-    assert item._is_on_resize_handle(QPointF(22, 16))
-    assert not item._is_on_resize_handle(QPointF(54, 54))
+    assert item._is_on_resize_handle(QPointF(50, 50))
+    assert item._is_on_resize_handle(QPointF(63, 63))
+    assert not item._is_on_resize_handle(QPointF(34, 28))
 
     item.resize_start_distance = 50.0
     item.resize_start_scale = 1.0
@@ -1020,6 +1020,28 @@ def test_layers_panel_grouped_object_up_down_keeps_current_object() -> None:
     assert panel.tree.currentItem() is not None
     assert panel.tree.currentItem().data(0, ROLE_TYPE) == "object"
     assert panel.tree.currentItem().data(0, ROLE_ID) == "obj_a"
+    app.processEvents()
+
+
+def test_layers_panel_multi_select_selects_all_objects_on_canvas() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], z_index=0))
+    canvas.add_drawing_shape(DrawingShape("obj_b", "Line", [0.0, 10.0, 10.0, 20.0], z_index=1))
+    panel.refresh()
+    item_a = panel._find_object_tree_item("drawing", "obj_a")
+    item_b = panel._find_object_tree_item("drawing", "obj_b")
+    assert item_a is not None
+    assert item_b is not None
+
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    panel._handle_selection()
+
+    selected_ids = {str(item.data(0)) for item in canvas.scene.selectedItems() if item.data(1) == "drawing"}
+    assert selected_ids == {"obj_a", "obj_b"}
     app.processEvents()
 
 
@@ -1482,17 +1504,13 @@ class _LayerDropEvent:
     def accept(self) -> None:
         self.accepted = True
 
-
-class _DragWheelEvent(_WheelEvent):
-    def type(self):
-        return QEvent.Type.Wheel
-        self.ignored = False
-
-    def acceptProposedAction(self) -> None:
-        self.accept()
-
     def ignore(self) -> None:
         self.ignored = True
 
     def setDropAction(self, action) -> None:
         self.drop_action = action
+
+
+class _DragWheelEvent(_WheelEvent):
+    def type(self):
+        return QEvent.Type.Wheel
