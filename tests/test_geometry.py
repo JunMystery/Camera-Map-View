@@ -1,9 +1,10 @@
 """Tests for geometry helpers and snap behavior."""
 
-from PyQt6.QtCore import QByteArray, QMimeData, QPointF, Qt
+from PyQt6.QtCore import QByteArray, QEvent, QMimeData, QPointF, Qt
 from PyQt6.QtGui import QImage
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QGraphicsView, QMenu
+from PyQt6.QtWidgets import QApplication, QAbstractItemView, QDialogButtonBox, QGraphicsView, QMenu
 
+from controllers.camera_data_manager import CameraDataManager
 from models.camera_data_model import Camera
 from models.canvas_layer_model import CanvasLayer
 from models.device_link_model import DeviceLink
@@ -17,6 +18,7 @@ from views.camera_view_item import CameraItem
 from views.camera_view_dialog import CameraPropertiesDialog
 from views.device_connections_dialog import DeviceConnectionsDialog
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
+from views.layers_panel import ROLE_ID, ROLE_LAYER_ID, ROLE_OBJECT_TYPE, ROLE_TYPE, LayersPanel
 from views.map_drawing_tools import (
     DrawingMode,
     TransformableImageItem,
@@ -354,6 +356,30 @@ def test_canvas_device_links_follow_downstream_and_single_upstream_path() -> Non
     app.processEvents()
 
 
+def test_camera_item_parent_ip_stays_tooltip_only() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    cam = Camera("cam", "Camera", "10.0.0.10")
+    ap = Camera("ap", "AP", "10.0.0.2", device_kind="AP", ping_enabled=False)
+    switch = Camera("switch", "Switch", "10.0.0.1", device_kind=DEVICE_KIND_SWITCH, ping_enabled=False)
+    for device in (cam, ap, switch):
+        canvas.add_camera_item(device)
+    canvas.set_device_links(
+        [
+            DeviceLink("link_cam_ap", "default", "cam", "ap"),
+            DeviceLink("link_ap_switch", "default", "ap", "switch"),
+        ]
+    )
+
+    item = canvas.camera_items["cam"]
+    item.set_info_visibility({"name": False, "zone": False, "ip": False, "dvr": True})
+
+    assert item._visible_info_lines() == []
+    assert "10.0.0.2" in item.toolTip()
+    assert "10.0.0.1" not in item._visible_info_lines()
+    app.processEvents()
+
+
 def test_camera_fov_fill_alpha_and_color_are_red() -> None:
     item = CameraItem(Camera("cam_test", "Lobby", "10.0.0.10"))
 
@@ -396,6 +422,7 @@ def test_device_dialog_uses_device_name_label_and_preserves_rotation() -> None:
 
     assert dialog.name_label.text() == "Tên thiết bị"
     assert not hasattr(dialog, "rotation_slider")
+    assert not hasattr(dialog, "dvr_input")
     assert not dialog.fov_input.isHidden()
     assert [dialog.fov_input.itemData(index) for index in range(dialog.fov_input.count())] == [80, 180, 360]
     assert dialog.get_camera().rotation == 123.0
@@ -460,7 +487,13 @@ def test_device_dialog_link_search_preserves_checked_and_shows_incoming() -> Non
     camera_a = Camera("cam_a", "Camera A", "10.0.0.10")
     camera_b = Camera("cam_b", "Camera B", "10.0.0.11")
     properties = CameraPropertiesDialog(ap, None, [ap, server, camera_a, camera_b], ["server"], ["cam_a", "cam_b"])
-    dialog = DeviceConnectionsDialog(ap, [server, camera_a, camera_b], set(properties.get_linked_device_ids()), {"cam_a", "cam_b"})
+    dialog = DeviceConnectionsDialog(
+        ap,
+        [server, camera_a, camera_b],
+        set(properties.get_linked_device_ids()),
+        {"cam_a", "cam_b"},
+        lambda device_id: "10.10.10.1" if device_id == "cam_a" else "",
+    )
 
     assert not hasattr(properties, "link_list")
     assert not hasattr(properties, "incoming_link_list")
@@ -469,6 +502,10 @@ def test_device_dialog_link_search_preserves_checked_and_shows_incoming() -> Non
     assert dialog.incoming_list.count() == 2
 
     dialog.search_input.setText("camera a")
+    assert dialog.incoming_list.item(0).isHidden() is False
+    assert dialog.incoming_list.item(1).isHidden() is True
+
+    dialog.search_input.setText("10.10.10.1")
     assert dialog.incoming_list.item(0).isHidden() is False
     assert dialog.incoming_list.item(1).isHidden() is True
 
@@ -922,6 +959,254 @@ def test_canvas_selection_priority_uses_layer_and_object_z_order() -> None:
     app.processEvents()
 
 
+def test_layers_panel_object_up_down_keeps_current_object() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    layer_id = canvas.active_layer_id
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], z_index=0))
+    canvas.add_drawing_shape(DrawingShape("obj_b", "Line", [0.0, 10.0, 10.0, 20.0], z_index=1))
+    canvas.add_drawing_shape(DrawingShape("obj_c", "Line", [0.0, 20.0, 10.0, 30.0], z_index=2))
+    panel.refresh()
+    item = panel._find_object_tree_item("drawing", "obj_a")
+    assert item is not None
+    panel.tree.setCurrentItem(item)
+    item.setSelected(True)
+    before_layer_order = list(canvas.annotation_layer_order)
+
+    panel._move_selected_index(1)
+    panel._move_selected_index(1)
+
+    assert int(canvas._find_layer_object_item("drawing", "obj_a").data(7) or 0) == 2
+    assert canvas.annotation_layer_order == before_layer_order
+    assert panel.tree.currentItem() is not None
+    assert panel.tree.currentItem().data(0, ROLE_TYPE) == "object"
+    assert panel.tree.currentItem().data(0, ROLE_ID) == "obj_a"
+    assert str(panel.tree.currentItem().data(0, ROLE_LAYER_ID)) == layer_id
+
+    panel._move_selected_index(-1)
+    panel._move_selected_index(1)
+
+    assert panel.tree.currentItem() is not None
+    assert panel.tree.currentItem().data(0, ROLE_TYPE) == "object"
+    assert panel.tree.currentItem().data(0, ROLE_ID) == "obj_a"
+    assert canvas.annotation_layer_order == before_layer_order
+    app.processEvents()
+
+
+def test_layers_panel_grouped_object_up_down_keeps_current_object() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    group = CanvasLayer("group_default_1", "default", "Group 1", 0, is_group=True)
+    layer = CanvasLayer("layer_default_2", "default", "Layer 2", 1, group_id=group.id)
+    canvas.set_canvas_layers([group, layer], "default")
+    canvas.set_active_layer(layer.id)
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], layer_id=layer.id, z_index=0))
+    canvas.add_drawing_shape(DrawingShape("obj_b", "Line", [0.0, 10.0, 10.0, 20.0], layer_id=layer.id, z_index=1))
+    canvas.add_drawing_shape(DrawingShape("obj_c", "Line", [0.0, 20.0, 10.0, 30.0], layer_id=layer.id, z_index=2))
+    panel.refresh()
+    item = panel._find_object_tree_item("drawing", "obj_a")
+    assert item is not None
+    panel.tree.setCurrentItem(item)
+    item.setSelected(True)
+
+    panel._move_selected_index(1)
+    panel._move_selected_index(1)
+
+    assert int(canvas._find_layer_object_item("drawing", "obj_a").data(7) or 0) == 2
+    assert panel.tree.currentItem() is not None
+    assert panel.tree.currentItem().data(0, ROLE_TYPE) == "object"
+    assert panel.tree.currentItem().data(0, ROLE_ID) == "obj_a"
+    app.processEvents()
+
+
+def test_layers_tree_drop_reorders_object_to_exact_index(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], z_index=0))
+    canvas.add_drawing_shape(DrawingShape("obj_b", "Line", [0.0, 10.0, 10.0, 20.0], z_index=1))
+    canvas.add_drawing_shape(DrawingShape("obj_c", "Line", [0.0, 20.0, 10.0, 30.0], z_index=2))
+    panel.refresh()
+    source = panel._find_object_tree_item("drawing", "obj_a")
+    target = panel._find_object_tree_item("drawing", "obj_c")
+    assert source is not None
+    assert target is not None
+    panel.tree.setCurrentItem(source)
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: target)
+    monkeypatch.setattr(
+        panel.tree,
+        "dropIndicatorPosition",
+        lambda: QAbstractItemView.DropIndicatorPosition.BelowItem,
+    )
+
+    event = _LayerDropEvent()
+    panel.tree.dropEvent(event)
+
+    assert event.accepted
+    assert event.drop_action == Qt.DropAction.CopyAction
+    assert int(canvas._find_layer_object_item("drawing", "obj_a").data(7) or 0) == 1
+    assert int(canvas._find_layer_object_item("drawing", "obj_b").data(7) or 0) == 0
+    assert int(canvas._find_layer_object_item("drawing", "obj_c").data(7) or 0) == 2
+
+    panel.refresh()
+    source = panel._find_object_tree_item("drawing", "obj_a")
+    target = panel._find_object_tree_item("drawing", "obj_c")
+    assert source is not None
+    assert target is not None
+    panel.tree.setCurrentItem(source)
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: target)
+    monkeypatch.setattr(
+        panel.tree,
+        "dropIndicatorPosition",
+        lambda: QAbstractItemView.DropIndicatorPosition.AboveItem,
+    )
+
+    event = _LayerDropEvent()
+    panel.tree.dropEvent(event)
+
+    assert event.accepted
+    assert event.drop_action == Qt.DropAction.CopyAction
+    assert int(canvas._find_layer_object_item("drawing", "obj_a").data(7) or 0) == 2
+    assert int(canvas._find_layer_object_item("drawing", "obj_c").data(7) or 0) == 1
+    app.processEvents()
+
+
+def test_layers_tree_drop_moves_to_layer_and_ignores_invalid_targets(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    source_layer = canvas.canvas_layers[0]
+    group = CanvasLayer("group_default_1", "default", "Group 1", 1, is_group=True)
+    target_layer = CanvasLayer("layer_default_2", "default", "Layer 2", 2)
+    canvas.set_canvas_layers([source_layer, group, target_layer], "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], layer_id=source_layer.id))
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    panel.refresh()
+    source = panel._find_object_tree_item("drawing", "obj_a")
+    assert source is not None
+    panel.tree.setCurrentItem(source)
+    target = next(
+        item
+        for item in _layer_tree_items(panel)
+        if item.data(0, ROLE_TYPE) == "layer" and item.data(0, ROLE_LAYER_ID) == target_layer.id
+    )
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: target)
+
+    event = _LayerDropEvent()
+    panel.tree.dropEvent(event)
+
+    assert event.accepted
+    assert event.drop_action == Qt.DropAction.CopyAction
+    assert canvas._find_layer_object_item("drawing", "obj_a").data(2) == target_layer.id
+
+    panel.refresh()
+    source = panel._find_object_tree_item("drawing", "obj_a")
+    assert source is not None
+    panel.tree.setCurrentItem(source)
+    group_target = next(item for item in _layer_tree_items(panel) if item.data(0, ROLE_TYPE) == "group")
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: group_target)
+
+    ignored = _LayerDropEvent()
+    panel.tree.dropEvent(ignored)
+
+    assert ignored.ignored
+    assert canvas._find_layer_object_item("drawing", "obj_a").data(2) == target_layer.id
+    app.processEvents()
+
+
+def test_layers_tree_drop_object_onto_itself_is_ignored(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], z_index=0))
+    panel.refresh()
+    source = panel._find_object_tree_item("drawing", "obj_a")
+    assert source is not None
+    panel.tree.setCurrentItem(source)
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: source)
+
+    event = _LayerDropEvent()
+    panel.tree.dropEvent(event)
+
+    assert event.ignored
+    assert int(canvas._find_layer_object_item("drawing", "obj_a").data(7) or 0) == 0
+    app.processEvents()
+
+
+class _ScrollBar:
+    def __init__(self) -> None:
+        self._value = 50
+
+    def singleStep(self) -> int:
+        return 10
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int) -> None:
+        self._value = value
+
+
+def test_layers_tree_wheel_scrolls_while_dragging(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    scroll_bar = _ScrollBar()
+    monkeypatch.setattr(panel.tree, "verticalScrollBar", lambda: scroll_bar)
+    panel.tree._drag_in_progress = True
+
+    down_event = _WheelEvent(-120)
+    panel.tree.wheelEvent(down_event)
+
+    assert down_event.accepted is True
+    assert scroll_bar.value() == 60
+
+    up_event = _WheelEvent(120)
+    panel.tree.wheelEvent(up_event)
+
+    assert up_event.accepted is True
+    assert scroll_bar.value() == 50
+    panel.tree._drag_in_progress = False
+    app.processEvents()
+
+
+def test_layers_tree_event_filter_scrolls_wheel_while_dragging(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    scroll_bar = _ScrollBar()
+    monkeypatch.setattr(panel.tree, "verticalScrollBar", lambda: scroll_bar)
+    panel.tree._drag_in_progress = True
+
+    event = _DragWheelEvent(-120)
+    handled = panel.tree.eventFilter(panel.tree.viewport(), event)
+
+    assert handled is True
+    assert event.accepted is True
+    assert scroll_bar.value() == 60
+    panel.tree._drag_in_progress = False
+    app.processEvents()
+
+
+def _layer_tree_items(panel: LayersPanel):
+    for index in range(panel.tree.topLevelItemCount()):
+        yield from _layer_tree_branch(panel.tree.topLevelItem(index))
+
+
+def _layer_tree_branch(item):
+    yield item
+    for child_index in range(item.childCount()):
+        yield from _layer_tree_branch(item.child(child_index))
+
+
 def test_canvas_object_visibility_hides_single_object_and_blocks_selection(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
@@ -1183,3 +1468,31 @@ class _DropEvent:
 
     def acceptProposedAction(self) -> None:
         self.accepted = True
+
+
+class _LayerDropEvent:
+    def __init__(self) -> None:
+        self.accepted = False
+        self.ignored = False
+        self.drop_action = None
+
+    def position(self) -> QPointF:
+        return QPointF(0, 0)
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class _DragWheelEvent(_WheelEvent):
+    def type(self):
+        return QEvent.Type.Wheel
+        self.ignored = False
+
+    def acceptProposedAction(self) -> None:
+        self.accept()
+
+    def ignore(self) -> None:
+        self.ignored = True
+
+    def setDropAction(self, action) -> None:
+        self.drop_action = action

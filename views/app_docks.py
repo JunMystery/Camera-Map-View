@@ -55,6 +55,7 @@ class AppDocks:
         self.drawing_tools_panel = DrawingToolsPanel(mode_actions, edit_actions, view_actions, self)
         self.drawing_tools_panel.set_drawing_color(self.map_canvas.drawing_color)
         self.drawing_tools_panel.set_fill_color(self.map_canvas.drawing_fill_color)
+        self.drawing_tools_panel.set_collapsed(True)
         self.drawing_tools_panel.show()
         self.position_drawing_tools_panel()
 
@@ -74,21 +75,24 @@ class AppDocks:
         self.layers_panel.close_requested.connect(self.layers_dock.close)
         self.layers_dock.setWidget(self.layers_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.layers_dock)
+        self.layers_dock.hide()
 
     def init_layouts_dock(self) -> None:
         """Layouts are managed by the combined control panel."""
         return
 
     def position_drawing_tools_panel(self) -> None:
-        """Anchor drawing tools to the left-center of the map canvas."""
+        """Anchor drawing tools to the top-left of the map canvas."""
         if not hasattr(self, "drawing_tools_panel"):
             return
         panel = self.drawing_tools_panel
+        if not panel.isVisible():
+            return
         panel.adjustSize()
         canvas_origin = self.map_canvas.mapTo(self, QPoint(0, 0))
         control_visible = hasattr(self, "dock") and self.dock.isVisible()
         x = max(14, canvas_origin.x() + 14) if control_visible else 14
-        y = max(canvas_origin.y() + 12, canvas_origin.y() + (self.map_canvas.height() - panel.height()) // 2)
+        y = max(12, canvas_origin.y() + 12)
         panel.move(x, y)
         panel.raise_()
 

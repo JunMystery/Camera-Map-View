@@ -88,6 +88,33 @@ def test_network_device_allows_blank_ip_and_links_are_layout_scoped() -> None:
     assert not manager.add_device_link("server_a", "switch_a")
 
 
+def test_parent_ip_for_device_uses_direct_parent_links(tmp_path) -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    ap = Camera("ap_a", "AP A", "10.0.0.2", device_kind="AP", variant="Indoor AP", ping_enabled=False)
+    switch = Camera("switch_a", "Switch A", "10.0.0.1", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    parent_b = Camera("parent_b", "Parent B", "10.0.0.3", device_kind=DEVICE_KIND_SWITCH, variant="Access", ping_enabled=False)
+    no_ip_parent = Camera("parent_empty", "Parent Empty", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    for device in (camera, ap, switch, parent_b, no_ip_parent):
+        assert manager.add_camera(device)
+    assert manager.add_device_link("cam_a", "ap_a")
+    assert manager.add_device_link("ap_a", "switch_a")
+
+    assert manager.parent_ip_for_device("cam_a") == "10.0.0.2"
+    assert manager.parent_ip_for_device("ap_a") == "10.0.0.1"
+
+    assert manager.add_device_link("cam_a", "parent_b")
+    assert manager.add_device_link("cam_a", "parent_empty")
+    assert manager.parent_ip_for_device("cam_a") == "10.0.0.2, 10.0.0.3"
+
+    export_path = tmp_path / "parent_ip.csv"
+    manager.export_cameras_csv(export_path)
+    exported = export_path.read_text(encoding="utf-8")
+    assert "parent_ip" in exported
+    assert "10.0.0.2, 10.0.0.3" in exported
+
+
 def test_update_camera_position_marks_camera_as_placed() -> None:
     manager = CameraDataManager(":memory:")
     _create_default_layout(manager)
@@ -323,19 +350,146 @@ def test_camera_csv_import_and_export(tmp_path) -> None:
     _create_default_layout(manager)
     csv_path = tmp_path / "cameras.csv"
     csv_path.write_text(
-        "id,name,ip_address,port,camera_type,zone,dvr_origin,notes\n"
-        "csv_01,Gate,10.0.0.20,554,AI,North,DVR-1,Imported\n",
+        "id,name,ip_address,port,camera_type,zone,parent_ip,notes\n"
+        "csv_01,Gate,10.0.0.20,554,AI,North,10.0.0.1,Imported\n",
         encoding="utf-8",
     )
 
     assert manager.import_cameras_csv(csv_path) == 1
     imported = manager.get_camera("csv_01")
     assert imported is not None
-    assert imported.dvr_origin == "DVR-1"
+    assert imported.dvr_origin == ""
 
     export_path = tmp_path / "export.csv"
     manager.export_cameras_csv(export_path)
-    assert "csv_01" in export_path.read_text(encoding="utf-8")
+    exported = export_path.read_text(encoding="utf-8")
+    assert "csv_01" in exported
+    assert "parent_ip" in exported
+    assert "dvr_origin" not in exported
+
+
+def test_camera_csv_import_replaces_existing_and_preserves_canvas_state(tmp_path) -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    manager.get_layers()
+    layer = manager.create_layer("Placed")
+    existing = Camera(
+        "csv_01",
+        "Old",
+        "10.0.0.20",
+        rotation=45.0,
+        display_scale=2.0,
+        layer_id=layer.id,
+        z_index=5,
+        object_locked=True,
+        object_visible=False,
+        badge_text="A1",
+    )
+    assert manager.add_camera(existing, is_placed=True)
+    assert manager.update_camera_position_in_layout("csv_01", 12.0, 34.0, "default")
+    assert manager.update_camera_scale_in_layout("csv_01", 2.0, "default")
+    assert manager.update_camera_rotation_in_layout("csv_01", 45.0, "default")
+    assert manager.update_camera_layer("csv_01", layer.id, "default")
+    csv_path = tmp_path / "replace.csv"
+    csv_path.write_text(
+        "id,name,ip_address,port,camera_type,device_kind,variant,ping_enabled,zone,parent_ip,notes\n"
+        "csv_01,New Name,10.0.0.21,8554,Dome,Camera,Dome,0,North,10.0.0.1,Updated\n",
+        encoding="utf-8",
+    )
+
+    assert manager.import_cameras_csv(csv_path) == 1
+
+    saved = manager.get_camera("csv_01")
+    assert saved is not None
+    assert saved.name == "New Name"
+    assert saved.ip_address == "10.0.0.21"
+    assert saved.port == 8554
+    assert saved.camera_type == "Dome"
+    assert saved.variant == "Dome"
+    assert saved.ping_enabled is False
+    assert saved.zone == "North"
+    assert saved.dvr_origin == ""
+    assert saved.notes == "Updated"
+    assert saved.position_x == 12.0
+    assert saved.position_y == 34.0
+    assert saved.rotation == 45.0
+    assert saved.display_scale == 2.0
+    assert saved.layer_id == layer.id
+    assert saved.z_index == 5
+    assert saved.object_locked is True
+    assert saved.object_visible is False
+    assert saved.badge_text == "A1"
+    assert [camera.id for camera in manager.get_placed_cameras()] == ["csv_01"]
+
+
+def test_camera_csv_import_replaces_name_with_normalized_headers(tmp_path) -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    assert manager.add_camera(Camera("csv_01", "Old Name", "10.0.0.20"))
+    csv_path = tmp_path / "replace_name.csv"
+    csv_path.write_text(
+        " ID , Name , IP_Address , Port , Camera_Type , Device_Kind , Variant \n"
+        "csv_01,Renamed From CSV,10.0.0.21,554,Fixed,Camera,Fixed\n",
+        encoding="utf-8",
+    )
+
+    assert manager.import_cameras_csv(csv_path) == 1
+
+    saved = manager.get_camera("csv_01")
+    assert saved is not None
+    assert saved.name == "Renamed From CSV"
+    assert saved.ip_address == "10.0.0.21"
+
+
+def test_camera_csv_import_generates_missing_id_and_skips_empty_or_bad_rows(tmp_path) -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    csv_path = tmp_path / "generated_ids.csv"
+    csv_path.write_text(
+        "id,name,ip_address,port,camera_type,device_kind,variant,zone,parent_ip,notes\n"
+        ",Generated,10.0.0.30,554,Fixed,Camera,Fixed,,,\n"
+        ",,,,,,,,,\n"
+        "bad_port,Bad Port,10.0.0.31,not-a-port,Fixed,Camera,Fixed,,,\n",
+        encoding="utf-8",
+    )
+
+    assert manager.import_cameras_csv(csv_path) == 1
+
+    cameras = manager.get_all_cameras()
+    assert len(cameras) == 1
+    assert cameras[0].id.startswith("dev_")
+    assert cameras[0].name == "Generated"
+    assert cameras[0].ip_address == "10.0.0.30"
+
+
+def test_camera_csv_import_rejects_ip_conflict_and_other_layout_id(tmp_path) -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    other = manager.create_layout("Other")
+    assert manager.add_camera(Camera("existing", "Existing", "10.0.0.40"))
+    assert manager.add_camera(Camera("same_id", "Default", "10.0.0.41"))
+    conflict_path = tmp_path / "conflict.csv"
+    conflict_path.write_text(
+        "id,name,ip_address,port,camera_type,device_kind,variant\n"
+        "new_id,Conflict,10.0.0.40,554,Fixed,Camera,Fixed\n",
+        encoding="utf-8",
+    )
+
+    assert manager.import_cameras_csv(conflict_path) == 0
+    assert manager.get_camera("new_id") is None
+
+    other_path = tmp_path / "other_layout.csv"
+    other_path.write_text(
+        "id,name,ip_address,port,camera_type,device_kind,variant\n"
+        "same_id,Should Not Replace,10.0.0.50,554,Fixed,Camera,Fixed\n",
+        encoding="utf-8",
+    )
+
+    assert manager.import_cameras_csv(other_path, other.id) == 0
+    saved = manager.get_camera("same_id")
+    assert saved is not None
+    assert saved.name == "Default"
+    assert saved.ip_address == "10.0.0.41"
 
 
 def test_layout_crud_and_data_isolation() -> None:

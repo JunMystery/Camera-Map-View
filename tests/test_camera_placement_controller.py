@@ -1,6 +1,6 @@
 """Tests for the camera placement controller."""
 
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtWidgets import QApplication, QMenu
 
 from controllers.camera_data_manager import CameraDataManager
@@ -9,7 +9,8 @@ from models.camera_data_model import Camera
 from models.device_catalog import DEVICE_KIND_SERVER, DEVICE_KIND_SWITCH
 from models.device_link_model import DeviceLink
 from models.drawing_shape_model import DrawingShape
-from views.control_layout_panel import ControlLayoutPanel as CameraPanel
+from views.app_camera_actions import AppCameraActions
+from views.control_layout_panel import ControlLayoutPanel as CameraPanel, DeviceParentPickerDialog
 from views.map_drawing_tools import DrawingMode
 from views.map_view_canvas import MapCanvas
 from views.ui_theme import GRID_DARK, GRID_LIGHT
@@ -93,6 +94,52 @@ class _DropEvent:
 
     def ignore(self) -> None:
         self.ignored = True
+
+
+class _WheelEvent:
+    def __init__(self, delta: int, pixel_delta: int = 0) -> None:
+        self._delta = delta
+        self._pixel_delta = pixel_delta
+        self.accepted = False
+
+    def angleDelta(self) -> QPoint:
+        return QPoint(0, self._delta)
+
+    def pixelDelta(self) -> QPoint:
+        return QPoint(0, self._pixel_delta)
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+class _DragWheelEvent(_WheelEvent):
+    def type(self):
+        return QEvent.Type.Wheel
+
+
+class _StatusBar:
+    def __init__(self) -> None:
+        self.messages = []
+
+    def showMessage(self, message: str, timeout: int = 0) -> None:
+        self.messages.append((message, timeout))
+
+
+class _ImportActionHost(AppCameraActions):
+    def __init__(self, manager: CameraDataManager, panel: CameraPanel, canvas: MapCanvas) -> None:
+        self.current_layout_id = "default"
+        self.camera_manager = manager
+        self.camera_panel = panel
+        self.map_canvas = canvas
+        self.status_bar = _StatusBar()
+        self.ping_refreshed = 0
+        self.dashboard_refreshed = 0
+
+    def refresh_ping_cameras(self) -> None:
+        self.ping_refreshed += 1
+
+    def refresh_status_dashboard(self) -> None:
+        self.dashboard_refreshed += 1
 
 
 def test_drawing_created_signal_persists_shape() -> None:
@@ -346,7 +393,7 @@ def test_camera_panel_search_toggle_and_link_tree_grouping() -> None:
     manager = CameraDataManager(":memory:")
     _create_default_layout(manager)
     server = Camera("server_a", "Server A", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
-    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    switch = Camera("switch_a", "Switch A", "10.0.0.20", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
     camera = Camera("cam_b", "Lobby", "10.0.0.11")
     gate = Camera("cam_a", "Gate", "10.0.0.10")
     for device in (server, switch, camera, gate):
@@ -360,6 +407,7 @@ def test_camera_panel_search_toggle_and_link_tree_grouping() -> None:
     panel.set_cameras(manager.get_all_cameras(), {"server_a", "switch_a", "cam_b"}, manager.get_device_links())
 
     root = panel.tree_widget.topLevelItem(0)
+    assert root.isExpanded() is False
     assert "Server A" in root.text(0)
     assert "Switch A" in root.child(0).text(0)
     assert "Lobby" in root.child(0).child(0).text(0)
@@ -367,6 +415,9 @@ def test_camera_panel_search_toggle_and_link_tree_grouping() -> None:
     panel.search_input.setText("Lobby")
     root = panel.tree_widget.topLevelItem(0)
     assert _camera_count(panel) == 3
+    assert root.isExpanded() is True
+    assert root.child(0).isExpanded() is True
+    assert panel.tree_widget.currentItem().data(0, Qt.ItemDataRole.UserRole) == "cam_b"
     assert "Server A" in root.text(0)
     assert "Switch A" in root.child(0).text(0)
     assert "Lobby" in root.child(0).child(0).text(0)
@@ -374,12 +425,53 @@ def test_camera_panel_search_toggle_and_link_tree_grouping() -> None:
     panel.search_input.setText("Switch")
     root = panel.tree_widget.topLevelItem(0)
     assert _camera_count(panel) == 3
+    assert root.isExpanded() is True
+    assert root.child(0).isExpanded() is True
+    assert panel.tree_widget.currentItem().data(0, Qt.ItemDataRole.UserRole) == "switch_a"
+    assert "Switch A" in root.child(0).text(0)
+    assert "Lobby" in root.child(0).child(0).text(0)
+    panel.search_input.setText("10.0.0.20")
+    root = panel.tree_widget.topLevelItem(0)
+    assert _camera_count(panel) == 3
     assert "Switch A" in root.child(0).text(0)
     assert "Lobby" in root.child(0).child(0).text(0)
     panel.search_input.clear()
+    root = panel.tree_widget.topLevelItem(0)
+    assert root.isExpanded() is False
     panel.unplaced_button.click()
     assert _camera_count(panel) == 1
     assert "Gate" in panel.tree_widget.topLevelItem(0).child(0).text(0)
+    app.processEvents()
+
+
+def test_camera_panel_search_expands_unlinked_group_and_clear_restores_user_state() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    placed = Camera("cam_placed", "Placed", "10.0.0.10")
+    unlinked = Camera("cam_unlinked", "Search Target", "10.0.0.11")
+    panel.set_cameras([placed, unlinked], set())
+    panel.unplaced_button.click()
+
+    group = panel.tree_widget.topLevelItem(0)
+    assert group.data(0, Qt.ItemDataRole.UserRole) == "group:unlinked"
+    assert group.isExpanded() is False
+
+    panel.search_input.setText("target")
+
+    group = panel.tree_widget.topLevelItem(0)
+    assert group.isExpanded() is True
+    assert panel.tree_widget.currentItem().data(0, Qt.ItemDataRole.UserRole) == "cam_unlinked"
+
+    panel.search_input.clear()
+
+    group = panel.tree_widget.topLevelItem(0)
+    assert group.isExpanded() is False
+    group.setExpanded(True)
+    panel.search_input.setText("target")
+    panel.search_input.clear()
+
+    group = panel.tree_widget.topLevelItem(0)
+    assert group.isExpanded() is True
     app.processEvents()
 
 
@@ -504,6 +596,41 @@ def test_camera_tree_quick_link_multi_selection_links_each_source(monkeypatch) -
     app.processEvents()
 
 
+def test_camera_tree_quick_link_preserves_other_expanded_groups(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    cam_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch_a = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    cam_b = Camera("cam_b", "Camera B", "10.0.0.11")
+    switch_b = Camera("switch_b", "Switch B", "", device_kind=DEVICE_KIND_SWITCH, variant="Access", ping_enabled=False)
+    router = Camera("router_a", "Router A", "", device_kind=DEVICE_KIND_SERVER, variant="Router", ping_enabled=False)
+    links = [
+        DeviceLink("link_1", "default", "cam_a", "switch_a"),
+        DeviceLink("link_2", "default", "cam_b", "switch_b"),
+    ]
+    devices = [cam_a, switch_a, cam_b, switch_b, router]
+    panel.set_cameras(devices, {device.id for device in devices}, links)
+    _camera_item(panel, "switch_a").setExpanded(True)
+    _camera_item(panel, "switch_b").setExpanded(True)
+
+    def create_link(source: str, target: str) -> bool:
+        links.append(DeviceLink("link_3", "default", source, target))
+        panel.set_cameras(devices, {device.id for device in devices}, links)
+        return True
+
+    panel.set_device_link_request_handler(create_link)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "router_a"))
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "switch_a")))
+    panel.tree_widget.dropEvent(event)
+
+    assert event.accepted is True
+    assert _camera_item(panel, "switch_b").isExpanded() is True
+    assert _camera_item(panel, "router_a").isExpanded() is False
+    assert _camera_item(panel, "switch_a").isExpanded() is True
+    app.processEvents()
+
+
 def test_camera_tree_blank_drop_ungroups_selected_sources(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     panel = CameraPanel()
@@ -547,7 +674,239 @@ def test_camera_controller_ungroup_refreshes_panel_tree() -> None:
 
     assert manager.get_device_links("default") == []
     assert _camera_item(panel, "cam_a").parent() is not _camera_item(panel, "switch_a")
-    assert panel.tree_widget.topLevelItem(0).isExpanded() is True
+    assert panel.tree_widget.topLevelItem(0).isExpanded() is False
+    app.processEvents()
+
+
+def test_device_parent_picker_lists_unplaced_and_excludes_descendants() -> None:
+    app = QApplication.instance() or QApplication([])
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch = Camera("switch_a", "Switch A", "10.0.0.20", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    router = Camera("router_a", "Router A", "10.0.0.30", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    child = Camera("child_a", "Child A", "10.0.0.40")
+    links = [
+        DeviceLink("link_1", "default", "child_a", "cam_a"),
+        DeviceLink("link_2", "default", "cam_a", "switch_a"),
+    ]
+    dialog = DeviceParentPickerDialog(
+        "cam_a",
+        {device.id: device for device in [camera, switch, router, child]},
+        links,
+        lambda _device_id: "",
+    )
+
+    visible_ids = {
+        dialog.tree_widget.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)
+        for index in range(dialog.tree_widget.topLevelItemCount())
+    }
+    assert visible_ids == {"switch_a", "router_a"}
+
+    dialog.search_input.setText("router")
+    visible_ids = {
+        dialog.tree_widget.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)
+        for index in range(dialog.tree_widget.topLevelItemCount())
+    }
+    assert visible_ids == {"router_a"}
+    app.processEvents()
+
+
+def test_camera_controller_change_parent_replaces_existing_parent_link() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    messages = []
+    controller = CameraPlacementController(
+        panel,
+        canvas,
+        manager,
+        status_callback=lambda message, _timeout: messages.append(message),
+    )
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    old_parent = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    new_parent = Camera("router_a", "Router A", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    for device in (camera, old_parent, new_parent):
+        assert manager.add_camera(device, is_placed=True)
+    assert manager.add_device_link("cam_a", "switch_a")
+    controller.load_cameras("default")
+
+    assert controller.change_device_parent("cam_a", "router_a") is True
+
+    assert {(link.source_device_id, link.target_device_id) for link in manager.get_device_links()} == {
+        ("cam_a", "router_a")
+    }
+    assert {(link.source_device_id, link.target_device_id) for link in canvas.device_links} == {
+        ("cam_a", "router_a")
+    }
+    assert _camera_item(panel, "cam_a").parent() is _camera_item(panel, "router_a")
+    assert messages
+    app.processEvents()
+
+
+def test_camera_tree_link_unlink_preserves_only_existing_expanded_groups(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    cam_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch_a = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    cam_b = Camera("cam_b", "Camera B", "10.0.0.11")
+    switch_b = Camera("switch_b", "Switch B", "", device_kind=DEVICE_KIND_SWITCH, variant="Access", ping_enabled=False)
+    cam_c = Camera("cam_c", "Camera C", "10.0.0.12")
+    switch_c = Camera("switch_c", "Switch C", "", device_kind=DEVICE_KIND_SWITCH, variant="Edge", ping_enabled=False)
+    router = Camera("router_a", "Router A", "", device_kind=DEVICE_KIND_SERVER, variant="Router", ping_enabled=False)
+    devices = [cam_a, switch_a, cam_b, switch_b, cam_c, switch_c, router]
+    placed_ids = {device.id for device in devices}
+    links = [
+        DeviceLink("link_1", "default", "cam_a", "switch_a"),
+        DeviceLink("link_2", "default", "cam_b", "switch_b"),
+        DeviceLink("link_3", "default", "cam_c", "switch_c"),
+    ]
+    panel.set_cameras(devices, placed_ids, links)
+    _camera_item(panel, "switch_a").setExpanded(True)
+    _camera_item(panel, "switch_b").setExpanded(False)
+    _camera_item(panel, "switch_c").setExpanded(False)
+
+    def create_link(source: str, target: str) -> bool:
+        links.append(DeviceLink("link_4", "default", source, target))
+        panel.set_cameras(devices, placed_ids, links)
+        return True
+
+    panel.set_device_link_request_handler(create_link)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "router_a"))
+
+    link_event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "switch_c")))
+    panel.tree_widget.dropEvent(link_event)
+
+    assert link_event.accepted is True
+    assert _camera_item(panel, "switch_a").isExpanded() is True
+    assert _camera_item(panel, "switch_b").isExpanded() is False
+    assert _camera_item(panel, "switch_c").isExpanded() is False
+    assert _camera_item(panel, "router_a").isExpanded() is False
+
+    def unlink_devices(source_ids: list[str]) -> bool:
+        links[:] = [link for link in links if link.source_device_id not in source_ids]
+        panel.set_cameras(devices, placed_ids, links)
+        return True
+
+    panel.set_device_unlink_request_handler(unlink_devices)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: None)
+
+    unlink_event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "cam_c")))
+    panel.tree_widget.dropEvent(unlink_event)
+
+    assert unlink_event.accepted is True
+    assert _camera_item(panel, "switch_a").isExpanded() is True
+    assert _camera_item(panel, "switch_b").isExpanded() is False
+    assert panel.tree_widget.topLevelItem(panel.tree_widget.topLevelItemCount() - 1).isExpanded() is False
+    app.processEvents()
+
+
+class _ScrollBar:
+    def __init__(self) -> None:
+        self._value = 50
+
+    def singleStep(self) -> int:
+        return 10
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int) -> None:
+        self._value = value
+
+
+def test_camera_tree_wheel_scrolls_while_dragging(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    scroll_bar = _ScrollBar()
+    monkeypatch.setattr(panel.tree_widget, "verticalScrollBar", lambda: scroll_bar)
+    panel.tree_widget._drag_in_progress = True
+
+    down_event = _WheelEvent(-120)
+    panel.tree_widget.wheelEvent(down_event)
+
+    assert down_event.accepted is True
+    assert scroll_bar.value() == 80
+
+    up_event = _WheelEvent(120)
+    panel.tree_widget.wheelEvent(up_event)
+
+    assert up_event.accepted is True
+    assert scroll_bar.value() == 50
+    panel.tree_widget._drag_in_progress = False
+    app.processEvents()
+
+
+def test_import_action_refreshes_placed_canvas_item_after_replace(tmp_path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    camera = Camera("csv_placed", "Old Device", "10.0.0.20", position_x=10.0, position_y=20.0)
+    assert manager.add_camera(camera, is_placed=True)
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    panel.set_cameras(manager.get_all_cameras(), {"csv_placed"}, [])
+    canvas.add_camera_item(manager.get_camera("csv_placed"))
+    host = _ImportActionHost(manager, panel, canvas)
+    csv_path = tmp_path / "replace.csv"
+    csv_path.write_text(
+        "id,name,ip_address,port,camera_type,device_kind,variant\n"
+        "csv_placed,New Device,10.0.0.21,554,Fixed,Camera,Fixed\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "views.app_camera_actions.QFileDialog.getOpenFileName",
+        lambda *_args, **_kwargs: (str(csv_path), ""),
+    )
+
+    host.import_cameras_csv()
+
+    assert canvas.camera_items["csv_placed"].camera.name == "New Device"
+    assert canvas.camera_items["csv_placed"].camera.ip_address == "10.0.0.21"
+    assert panel.cameras["csv_placed"].name == "New Device"
+    assert host.ping_refreshed == 1
+    assert host.dashboard_refreshed == 1
+    app.processEvents()
+
+
+def test_camera_tree_event_filter_scrolls_wheel_while_dragging(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    scroll_bar = _ScrollBar()
+    monkeypatch.setattr(panel.tree_widget, "verticalScrollBar", lambda: scroll_bar)
+    panel.tree_widget._drag_in_progress = True
+
+    wheel_event = _DragWheelEvent(-120)
+    handled = panel.tree_widget.eventFilter(panel.tree_widget.viewport(), wheel_event)
+
+    assert handled is True
+    assert wheel_event.accepted is True
+    assert scroll_bar.value() == 80
+
+    pixel_event = _DragWheelEvent(0, pixel_delta=-18)
+    handled = panel.tree_widget.eventFilter(panel.tree_widget.viewport(), pixel_event)
+
+    assert handled is True
+    assert pixel_event.accepted is True
+    assert scroll_bar.value() == 98
+    panel.tree_widget._drag_in_progress = False
+    app.processEvents()
+
+
+def test_camera_panel_groups_are_collapsed_by_default() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    server = Camera("server_a", "Server A", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    switch = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    camera = Camera("cam_a", "Camera A", "10.0.0.10")
+    links = [
+        DeviceLink("link_1", "default", "cam_a", "switch_a"),
+        DeviceLink("link_2", "default", "switch_a", "server_a"),
+    ]
+
+    panel.set_cameras([server, switch, camera], {"server_a", "switch_a", "cam_a"}, links)
+
+    assert panel.tree_widget.topLevelItem(0).isExpanded() is False
     app.processEvents()
 
 
@@ -655,7 +1014,77 @@ def test_canvas_device_link_signal_persists_and_overlay_shows_related_chain() ->
     app.processEvents()
 
 
-def test_canvas_device_link_context_menu_removes_one_link(monkeypatch) -> None:
+def test_canvas_topology_highlight_marks_upstream_and_downstream_without_siblings() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    camera = Camera("cam_a", "Camera A", "10.0.0.10", position_x=0.0, position_y=0.0)
+    ap = Camera("ap_a", "AP A", "10.0.0.20", position_x=50.0, position_y=0.0, device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    switch = Camera("switch_a", "Switch A", "10.0.0.30", position_x=100.0, position_y=0.0, device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    router = Camera("router_a", "Router A", "10.0.0.40", position_x=150.0, position_y=0.0, device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False)
+    sibling = Camera("pc_a", "PC A", "10.0.0.50", position_x=100.0, position_y=50.0)
+    for device in (camera, ap, switch, router, sibling):
+        canvas.add_camera_item(device)
+    links = [
+        DeviceLink("link_cam_ap", "default", "cam_a", "ap_a"),
+        DeviceLink("link_ap_switch", "default", "ap_a", "switch_a"),
+        DeviceLink("link_switch_router", "default", "switch_a", "router_a"),
+        DeviceLink("link_pc_switch", "default", "pc_a", "switch_a"),
+    ]
+    canvas.set_device_links(links)
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+
+    canvas.camera_items["cam_a"].setSelected(True)
+
+    assert canvas.camera_items["cam_a"].topology_highlight_role == "selected"
+    assert canvas.camera_items["ap_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["switch_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["router_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["pc_a"].topology_highlight_role == ""
+
+    canvas.scene.clearSelection()
+    assert canvas.highlight_device_topology("cam_a")
+
+    assert canvas.camera_items["cam_a"].topology_highlight_role == "selected"
+    assert canvas.camera_items["ap_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["switch_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["router_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["pc_a"].topology_highlight_role == ""
+    assert {item.link.id for item in canvas.device_link_items} == {
+        "link_cam_ap",
+        "link_ap_switch",
+        "link_switch_router",
+    }
+    assert all(item.link_role == "upstream" for item in canvas.device_link_items)
+    assert all(item.pen().color().name() == "#f59e0b" for item in canvas.device_link_items)
+
+    assert canvas.highlight_device_topology("switch_a")
+
+    roles = {item.link.id: item.link_role for item in canvas.device_link_items}
+    colors = {item.link.id: item.pen().color().name() for item in canvas.device_link_items}
+    assert roles == {
+        "link_cam_ap": "downstream",
+        "link_ap_switch": "downstream",
+        "link_pc_switch": "downstream",
+        "link_switch_router": "upstream",
+    }
+    assert colors["link_switch_router"] == "#f59e0b"
+    assert colors["link_cam_ap"] == "#38bdf8"
+    assert canvas.camera_items["pc_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["switch_a"].topology_highlight_role == "selected"
+
+    canvas.camera_items["pc_a"].setSelected(True)
+
+    assert all(not item.topology_highlight_role for item in canvas.camera_items.values())
+    assert canvas.device_link_items == []
+
+    canvas.scene.clearSelection()
+
+    assert all(not item.topology_highlight_role for item in canvas.camera_items.values())
+    assert canvas.device_link_items == []
+    app.processEvents()
+
+
+def test_canvas_device_link_context_menu_is_disabled(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     manager = CameraDataManager(":memory:")
     _create_default_layout(manager)
@@ -678,20 +1107,21 @@ def test_canvas_device_link_context_menu_removes_one_link(monkeypatch) -> None:
     canvas.set_drawing_mode(DrawingMode.SELECT)
     canvas.camera_items["switch_a"].setSelected(True)
 
-    def choose_remove(menu: QMenu, _pos: object) -> object:
-        menu.actions()[0].trigger()
-        return menu.actions()[0]
+    def fail_if_opened(_menu: QMenu, _pos: object) -> object:
+        raise AssertionError("canvas link context menu should not open")
 
-    monkeypatch.setattr(QMenu, "exec", choose_remove)
-    canvas.device_link_items[0].contextMenuEvent(_ContextMenuEvent())
+    monkeypatch.setattr(QMenu, "exec", fail_if_opened)
+    event = _ContextMenuEvent()
+    canvas.device_link_items[0].contextMenuEvent(event)
 
     links = manager.get_device_links()
-    assert len(links) == 1
-    assert {(link.source_device_id, link.target_device_id) for link in links} in [
-        {("cam_a", "switch_a")},
-        {("cam_b", "switch_a")},
-    ]
-    assert len(canvas.device_link_items) == 1
+    assert event.ignored is True
+    assert len(links) == 2
+    assert {(link.source_device_id, link.target_device_id) for link in links} == {
+        ("cam_a", "switch_a"),
+        ("cam_b", "switch_a"),
+    }
+    assert len(canvas.device_link_items) == 2
     assert controller.current_layout_id == "default"
     app.processEvents()
 
@@ -714,7 +1144,9 @@ def test_canvas_device_link_context_menu_ignores_link_mode(monkeypatch) -> None:
     canvas.set_drawing_mode(DrawingMode.SELECT)
     canvas.camera_items["cam_a"].setSelected(True)
     link_item = canvas.device_link_items[0]
-    assert link_item.pen().widthF() == 2.2
+    assert link_item.link_role == "upstream"
+    assert link_item.pen().widthF() == 3.0
+    assert link_item.pen().color().name() == "#f59e0b"
     assert link_item.shape().boundingRect().height() >= 28.0
 
     def fail_if_opened(_menu: QMenu, _pos: object) -> object:

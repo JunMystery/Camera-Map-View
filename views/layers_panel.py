@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -39,6 +39,18 @@ class LayersTreeWidget(QTreeWidget):
     object_reordered = pyqtSignal(str, str, str, int)
     layer_grouped = pyqtSignal(str, str)
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._drag_in_progress = False
+        self.installEventFilter(self)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if getattr(self, "_drag_in_progress", False) and event.type() == QEvent.Type.Wheel:
+            if self._handle_drag_wheel_event(event):
+                return True
+        return super().eventFilter(watched, event)
+
     def dropEvent(self, event) -> None:
         source = self.currentItem()
         if source is None or source.data(0, ROLE_TYPE) not in {"object", "layer"}:
@@ -55,70 +67,33 @@ class LayersTreeWidget(QTreeWidget):
             if not group_id and target_type == "layer" and target.parent() is not None and target.parent().data(0, ROLE_TYPE) == "group":
                 group_id = str(target.parent().data(0, ROLE_LAYER_ID) or "")
             self.layer_grouped.emit(str(source.data(0, ROLE_LAYER_ID)), group_id)
-            event.acceptProposedAction()
+            self._accept_copy_drop(event)
             return
         if target_type == "object":
             parent = target.parent()
             if parent is None:
                 event.ignore()
                 return
-            
             layer_id = str(parent.data(0, ROLE_LAYER_ID))
-            drop_pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-            drop_y = drop_pos.y()
-            
-            # MANUAL SCAN: itemAt() unreliable during drag, scan all items to find visual target
-            correct_target = None
-            target_index = parent.childCount()  # Default: after all items
-            
-            for i in range(parent.childCount()):
-                candidate = parent.child(i)
-                if candidate.data(0, ROLE_TYPE) != "object":
-                    continue
-                    
-                candidate_rect = self.visualItemRect(candidate)
-                if not candidate_rect.isValid():
-                    continue
-                
-                # Check if drop_y is within this item's Y range
-                if candidate_rect.top() <= drop_y <= candidate_rect.bottom():
-                    correct_target = candidate
-                    target_center_y = candidate_rect.center().y()
-                    
-                    # Determine upper/lower half
-                    if drop_y > target_center_y:
-                        target_index = i + 1  # Drop after this item
-                    else:
-                        target_index = i  # Drop before this item
-                    break
-            
-            print(f"[DEBUG DROP] target_idx={target_index}, drop_y={drop_y}, items_count={parent.childCount()}")
-            
-            # Collect selected objects from same layer, excluding the target itself
-            selected_objects: list[tuple[str, str]] = []
-            for item in self.selectedItems():
-                if item.data(0, ROLE_TYPE) == "object" and item.parent() == parent and item is not correct_target:
-                    selected_objects.append((
-                        str(item.data(0, ROLE_OBJECT_TYPE)),
-                        str(item.data(0, ROLE_ID))
-                    ))
-            
-            if not selected_objects:
-                selected_objects = [(str(source.data(0, ROLE_OBJECT_TYPE)), str(source.data(0, ROLE_ID)))]
-            
-            # Emit reorder signals for EACH selected object with adjusted indices
-            for idx, (obj_type, obj_id) in enumerate(selected_objects):
-                adjusted_index = target_index + idx
-                print(f"[DEBUG EMIT] obj_id={obj_id}, idx={adjusted_index}")
-                self.object_reordered.emit(
-                    obj_type,
-                    obj_id,
+            if source.parent() is not parent:
+                self.object_dropped.emit(
+                    str(source.data(0, ROLE_OBJECT_TYPE)),
+                    str(source.data(0, ROLE_ID)),
                     layer_id,
-                    adjusted_index,
                 )
-            event.accept()
-            return
-            event.accept()
+                self._accept_copy_drop(event)
+                return
+            target_index = self._target_z_index_after_visual_drop(parent, source, target)
+            if target_index is None:
+                event.ignore()
+                return
+            self.object_reordered.emit(
+                str(source.data(0, ROLE_OBJECT_TYPE)),
+                str(source.data(0, ROLE_ID)),
+                layer_id,
+                target_index,
+            )
+            self._accept_copy_drop(event)
             return
         if target_type == "layer":
             self.object_dropped.emit(
@@ -126,12 +101,88 @@ class LayersTreeWidget(QTreeWidget):
                 str(source.data(0, ROLE_ID)),
                 str(target.data(0, ROLE_LAYER_ID)),
             )
-            event.acceptProposedAction()
+            self._accept_copy_drop(event)
             return
         if target_type == "group":
             event.ignore()
             return
         event.ignore()
+
+    def startDrag(self, supported_actions: Qt.DropAction) -> None:
+        self._drag_in_progress = True
+        try:
+            super().startDrag(Qt.DropAction.CopyAction)
+        finally:
+            self._drag_in_progress = False
+
+    def dragMoveEvent(self, event) -> None:
+        self._auto_scroll_for_drag(event)
+        super().dragMoveEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        if self._handle_drag_wheel_event(event):
+            return
+        super().wheelEvent(event)
+
+    def supportedDropActions(self) -> Qt.DropAction:
+        return Qt.DropAction.CopyAction
+
+    def _accept_copy_drop(self, event) -> None:
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+
+    def _auto_scroll_for_drag(self, event) -> None:
+        point = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        margin = max(12, self.autoScrollMargin())
+        viewport_height = self.viewport().height()
+        if point.y() < margin:
+            self._scroll_by_steps(-1)
+        elif point.y() > viewport_height - margin:
+            self._scroll_by_steps(1)
+
+    def _handle_drag_wheel_event(self, event) -> bool:
+        if not getattr(self, "_drag_in_progress", False):
+            return False
+        delta = event.angleDelta().y()
+        if not delta:
+            return False
+        self._scroll_by_delta(delta)
+        event.accept()
+        return True
+
+    def _scroll_by_delta(self, delta: int) -> None:
+        steps = max(1, abs(delta) // 120)
+        self._scroll_by_steps(-steps if delta > 0 else steps)
+
+    def _scroll_by_steps(self, steps: int) -> None:
+        scroll_bar = self.verticalScrollBar()
+        step_size = max(1, scroll_bar.singleStep())
+        scroll_bar.setValue(scroll_bar.value() + steps * step_size)
+
+    def _drop_after_target(self) -> bool:
+        if hasattr(self, "dropIndicatorPosition"):
+            return self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.BelowItem
+        return False
+
+    def _target_z_index_after_visual_drop(
+        self,
+        parent: QTreeWidgetItem,
+        source: QTreeWidgetItem,
+        target: QTreeWidgetItem,
+    ) -> int | None:
+        visual_items = [parent.child(index) for index in range(parent.childCount())]
+        source_visual_index = parent.indexOfChild(source)
+        target_visual_index = parent.indexOfChild(target)
+        if source_visual_index < 0 or target_visual_index < 0 or source is target:
+            return None
+        visual_items.remove(source)
+        if target not in visual_items:
+            return None
+        target_visual_index = visual_items.index(target)
+        insert_visual_index = target_visual_index + (1 if self._drop_after_target() else 0)
+        visual_items.insert(insert_visual_index, source)
+        final_visual_index = visual_items.index(source)
+        return len(visual_items) - 1 - final_visual_index
 
 
 class LayersPanel(QWidget):
@@ -271,6 +322,9 @@ class LayersPanel(QWidget):
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
+        self.tree.setAutoScroll(True)
+        self.tree.setAutoScrollMargin(28)
+        self.tree.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree.setRootIsDecorated(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -451,42 +505,22 @@ class LayersPanel(QWidget):
         item = self.tree.currentItem()
         if item is None:
             return
-        if item.data(0, ROLE_TYPE) == "group":
+        row_type = item.data(0, ROLE_TYPE)
+        if row_type in {"group", "layer"}:
             layer_id = str(item.data(0, ROLE_LAYER_ID))
             self._begin_history("layer_move")
             if self.camera_manager.move_layer(layer_id, direction, self.layout_id_callback()):
                 self._reload_layers()
             self._commit_history("layer_move")
             return
-        if item.data(0, ROLE_TYPE) == "object":
-            # Save current selection to restore after refresh
-            selected_item_ids: list[str] = []
-            for selected_item in self.tree.selectedItems():
-                if selected_item.data(0, ROLE_TYPE) == "object":
-                    selected_item_ids.append(str(selected_item.data(0, ROLE_ID)))
-            
-            if self.canvas.move_layer_object(str(item.data(0, ROLE_OBJECT_TYPE)), str(item.data(0, ROLE_ID)), direction):
+        if row_type == "object":
+            object_type = str(item.data(0, ROLE_OBJECT_TYPE))
+            object_id = str(item.data(0, ROLE_ID))
+            selected_keys = self._selected_object_keys()
+            if self.canvas.move_layer_object(object_type, object_id, direction):
                 self.refresh()
-                # Restore selection after refresh
-                self._refreshing = True
-                self.tree.blockSignals(True)
-                for i in range(self.tree.topLevelItemCount()):
-                    layer_item = self.tree.topLevelItem(i)
-                    if layer_item is None:
-                        continue
-                    for child_idx in range(layer_item.childCount()):
-                        child = layer_item.child(child_idx)
-                        if child and child.data(0, ROLE_ID) in selected_item_ids:
-                            child.setSelected(True)
-                self.tree.blockSignals(False)
-                self._refreshing = False
+                self._restore_object_selection(selected_keys, (object_type, object_id))
             return
-        layer_id = self._selected_layer_id()
-        if layer_id:
-            self._begin_history("layer_move")
-            if self.camera_manager.move_layer(layer_id, direction, self.layout_id_callback()):
-                self._reload_layers()
-            self._commit_history("layer_move")
 
     def _move_dropped_object(self, object_type: str, object_id: str, layer_id: str) -> None:
         if self.canvas.move_layer_object_to_layer(object_type, object_id, layer_id):
@@ -496,6 +530,7 @@ class LayersPanel(QWidget):
     def _reorder_dropped_object(self, object_type: str, object_id: str, layer_id: str, target_index: int) -> None:
         if self.canvas.move_layer_object_to_index(object_type, object_id, layer_id, target_index):
             self.refresh()
+            self._restore_object_selection([(object_type, object_id)], (object_type, object_id))
 
     def _set_layer_group(self, layer_id: str, group_id: str) -> None:
         if not layer_id or layer_id == group_id:
@@ -514,6 +549,61 @@ class LayersPanel(QWidget):
         if item is not None and item.data(0, ROLE_TYPE) == "group":
             return str(item.data(0, ROLE_LAYER_ID))
         return str(item.data(0, ROLE_LAYER_ID)) if item is not None else ""
+
+    def _selected_object_keys(self) -> list[tuple[str, str]]:
+        keys: list[tuple[str, str]] = []
+        for item in self.tree.selectedItems():
+            if item.data(0, ROLE_TYPE) == "object":
+                keys.append((str(item.data(0, ROLE_OBJECT_TYPE)), str(item.data(0, ROLE_ID))))
+        return keys
+
+    def _restore_object_selection(
+        self,
+        selected_keys: list[tuple[str, str]],
+        current_key: tuple[str, str],
+    ) -> None:
+        self._refreshing = True
+        self.tree.blockSignals(True)
+        self.tree.clearSelection()
+        current_item: QTreeWidgetItem | None = None
+        selected_set = set(selected_keys)
+        selected_set.add(current_key)
+        for object_type, object_id in selected_set:
+            target = self._find_object_tree_item(object_type, object_id)
+            if target is None:
+                continue
+            target.setSelected(True)
+            if (object_type, object_id) == current_key:
+                current_item = target
+        if current_item is not None:
+            self.tree.setCurrentItem(current_item)
+        self.tree.blockSignals(False)
+        self._refreshing = False
+
+    def _find_object_tree_item(self, object_type: str, object_id: str) -> QTreeWidgetItem | None:
+        for index in range(self.tree.topLevelItemCount()):
+            found = self._find_object_tree_item_in_branch(self.tree.topLevelItem(index), object_type, object_id)
+            if found is not None:
+                return found
+        return None
+
+    def _find_object_tree_item_in_branch(
+        self,
+        item: QTreeWidgetItem,
+        object_type: str,
+        object_id: str,
+    ) -> QTreeWidgetItem | None:
+        if (
+            item.data(0, ROLE_TYPE) == "object"
+            and str(item.data(0, ROLE_OBJECT_TYPE)) == object_type
+            and str(item.data(0, ROLE_ID)) == object_id
+        ):
+            return item
+        for child_index in range(item.childCount()):
+            found = self._find_object_tree_item_in_branch(item.child(child_index), object_type, object_id)
+            if found is not None:
+                return found
+        return None
 
     def _reload_layers(self) -> None:
         layout_id = self.layout_id_callback()

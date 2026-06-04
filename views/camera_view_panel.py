@@ -1,4 +1,4 @@
-"""Sidebar camera manager with search, placed toggle, and DVR grouping."""
+"""Sidebar camera manager with search and placed toggle."""
 
 from PyQt6.QtCore import QMimeData, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QPainter, QPixmap
@@ -46,7 +46,7 @@ class CameraTreeWidget(QTreeWidget):
 
 
 class CameraPanel(QWidget):
-    """Show and manage placed or unplaced cameras grouped by DVR."""
+    """Show and manage placed or unplaced cameras."""
 
     camera_add_requested = pyqtSignal()
     camera_edit_requested = pyqtSignal(str)
@@ -90,7 +90,7 @@ class CameraPanel(QWidget):
         for camera in self.cameras.values():
             if (camera.id in self.placed_ids) != self.show_placed or not self._matches(camera, query):
                 continue
-            group_key = camera.dvr_origin or t("camera_panel.no_dvr")
+            group_key = t("camera_panel.unlinked_group")
             groups.setdefault(group_key, []).append(camera)
         for dvr_name, cameras in sorted(groups.items()):
             group_item = QTreeWidgetItem([f"{dvr_name} ({len(cameras)})"])
@@ -163,7 +163,7 @@ class CameraPanel(QWidget):
         self.retranslate()
 
     def _matches(self, camera: Camera, query: str) -> bool:
-        haystack = f"{camera.name} {camera.ip_address} {camera.dvr_origin} {camera.zone}".lower()
+        haystack = f"{camera.name} {camera.ip_address} {camera.zone}".lower()
         return not query or query in haystack
 
     def _camera_item_text(self, camera: Camera) -> str:

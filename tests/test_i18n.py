@@ -28,6 +28,7 @@ from views.confirm_dialog import ConfirmDialog
 from models.drawing_shape_model import DrawingShape
 from models.map_layout_model import MapLayout
 from views.layout_properties_dialog import LayoutPropertiesDialog
+from views.map_drawing_tools import DrawingMode
 from views.settings_dialog import SettingsDialog
 from views.ui_theme import DANGER, LIGHT_ACTIVE_ROW, LIGHT_TEXT, app_stylesheet
 
@@ -143,6 +144,25 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert window.camera_panel.placed_button.x() < window.camera_panel.unplaced_button.x()
         assert window.camera_panel.rename_layout_button.property("icon_name") == "cog"
         assert window.camera_panel.edit_button.property("icon_name") == "cog"
+        assert window.drawing_tools_panel.isVisible()
+        assert not window.drawing_tools_panel.content.isVisible()
+        assert not window.layers_dock.isVisible()
+        assert window.pan_action.isChecked()
+        assert not window.select_action.isChecked()
+        assert window.map_canvas.drawing_mode == DrawingMode.PAN
+        assert window.toggle_pan_select_action.shortcut().toString() == "1"
+        window.toggle_pan_select_action.trigger()
+        assert window.map_canvas.drawing_mode == DrawingMode.SELECT
+        assert window.select_action.isChecked()
+        assert not window.pan_action.isChecked()
+        window.toggle_pan_select_action.trigger()
+        assert window.map_canvas.drawing_mode == DrawingMode.PAN
+        assert window.pan_action.isChecked()
+        assert not window.select_action.isChecked()
+        assert not window.grid_action.isChecked()
+        assert not window.map_canvas.grid_visible
+        assert not window.info_actions["name"].isChecked()
+        assert "dvr" not in window.info_actions
         window.camera_panel.close_button.click()
         app.processEvents()
         assert not window.dock.isVisible()
@@ -175,7 +195,10 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         window.drawing_tools_panel.set_collapsed(True)
         assert not window.drawing_tools_panel.content.isVisible()
         window.drawing_tools_panel.set_collapsed(False)
+        app.processEvents()
         assert window.drawing_tools_panel.content.isVisible()
+        canvas_top = window.map_canvas.mapTo(window, window.map_canvas.rect().topLeft()).y()
+        assert window.drawing_tools_panel.y() == max(12, canvas_top + 12)
         window.layers_dock.show()
         assert window.layers_dock.isVisible()
         window.layers_panel.close_button.click()
@@ -250,6 +273,7 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
             for button in window.drawing_tools_panel.findChildren(QToolButton)
             if button.defaultAction() is not None
         ]
+        assert all(action.objectName() != "show_dvr" for menu in window.drawing_tools_panel.findChildren(QMenu) for action in menu.actions())
         assert window.pan_action.isChecked()
         assert not window.select_action.isChecked()
         assert window.status_dashboard.total_label.text().startswith("Total:")

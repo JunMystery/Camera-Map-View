@@ -63,6 +63,8 @@ class CameraPlacementController:
             self.camera_panel.set_device_unlink_request_handler(self.unlink_devices_from_group)
         elif hasattr(self.camera_panel, "device_unlink_requested"):
             self.camera_panel.device_unlink_requested.connect(self.unlink_devices_from_group)
+        if hasattr(self.camera_panel, "device_parent_change_requested"):
+            self.camera_panel.device_parent_change_requested.connect(self.change_device_parent)
 
     def load_cameras(self, layout_id: str | None = None) -> None:
         """Load persisted cameras into the sidebar and map."""
@@ -77,10 +79,12 @@ class CameraPlacementController:
             return
         self.camera_manager.seed_default_cameras(self.current_layout_id)
         self.map_canvas.set_canvas_layers(self.camera_manager.get_layers(self.current_layout_id), self.current_layout_id)
+        all_cameras = self.camera_manager.get_all_cameras(self.current_layout_id)
         placed_cameras = self.camera_manager.get_placed_cameras(self.current_layout_id)
         device_links = self.camera_manager.get_device_links(self.current_layout_id)
+        self.map_canvas.set_device_catalog(all_cameras)
         self.camera_panel.set_cameras(
-            self.camera_manager.get_all_cameras(self.current_layout_id),
+            all_cameras,
             {camera.id for camera in placed_cameras},
             device_links,
         )
@@ -154,6 +158,7 @@ class CameraPlacementController:
             self.camera_manager.get_all_cameras(self.current_layout_id),
             self.camera_manager.get_linked_device_ids(camera_id, self.current_layout_id),
             self.camera_manager.get_incoming_device_ids(camera_id, self.current_layout_id),
+            lambda device_id: self.camera_manager.parent_ip_for_device(device_id, self.current_layout_id),
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -235,6 +240,7 @@ class CameraPlacementController:
             {camera.id for camera in self.camera_manager.get_placed_cameras(self.current_layout_id)},
             self.camera_manager.get_device_links(self.current_layout_id),
         )
+        self.map_canvas.set_device_catalog(self.camera_manager.get_all_cameras(self.current_layout_id))
 
     def add_drawing_shape(self, shape: object) -> bool:
         """Persist drawings into the active layout."""
@@ -334,6 +340,49 @@ class CameraPlacementController:
             self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
             self._refresh_camera_panel()
             self._show_status(t("status.device_link_removed"), 3000)
+            return True
+
+    def change_device_parent(self, source_device_id: str, target_parent_id: str) -> bool:
+        """Replace one device's outgoing parent links with one selected parent."""
+        if not source_device_id or not target_parent_id or source_device_id == target_parent_id:
+            self._show_status(t("status.device_link_skipped"), 3000)
+            return False
+        if not self.current_layout_id:
+            self._show_status(t("status.device_link_skipped"), 3000)
+            return False
+        if not self.camera_manager._device_in_layout(source_device_id, self.current_layout_id):
+            self._show_status(t("status.device_link_skipped"), 3000)
+            return False
+        if not self.camera_manager._device_in_layout(target_parent_id, self.current_layout_id):
+            self._show_status(t("status.device_link_skipped"), 3000)
+            return False
+        if self.camera_manager._would_create_cycle(source_device_id, target_parent_id, self.current_layout_id):
+            self._show_status(t("status.device_link_skipped"), 3000)
+            return False
+
+        with self._capture_history("device_parent_change"):
+            current_links = self.camera_manager.get_device_links(self.current_layout_id)
+            existing_targets = [
+                link.target_device_id for link in current_links if link.source_device_id == source_device_id
+            ]
+            if existing_targets == [target_parent_id]:
+                self._show_status(t("status.device_parent_changed"), 3000)
+                return True
+            for link in current_links:
+                if link.source_device_id == source_device_id:
+                    self.camera_manager.delete_device_link_between(
+                        link.source_device_id,
+                        link.target_device_id,
+                        self.current_layout_id,
+                    )
+            if not self.camera_manager.add_device_link(source_device_id, target_parent_id, self.current_layout_id):
+                self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
+                self._refresh_camera_panel()
+                self._show_status(t("status.device_link_skipped"), 3000)
+                return False
+            self.map_canvas.set_device_links(self.camera_manager.get_device_links(self.current_layout_id))
+            self._refresh_camera_panel()
+            self._show_status(t("status.device_parent_changed"), 3000)
             return True
 
     def update_object_name(self, object_type: str, object_id: str, display_name: str) -> None:
