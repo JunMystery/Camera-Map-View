@@ -44,6 +44,8 @@ class AppLayoutActions:
         layout.canvas_height = values.canvas_height
         layout.grid_size = values.grid_size
         layout.background_scale = values.background_scale
+        layout.background_x = values.background_x
+        layout.background_y = values.background_y
         self.camera_manager.update_layout(layout)
         self.refresh_layouts_panel()
         self.switch_layout(layout.id)
@@ -91,15 +93,21 @@ class AppLayoutActions:
                 "canvas_height": layout.canvas_height,
                 "grid_size": layout.grid_size,
                 "background_scale": layout.background_scale,
+                "background_x": layout.background_x,
+                "background_y": layout.background_y,
             }
         )
         self.map_canvas.background_scale = layout.background_scale
+        self.map_canvas.background_x = layout.background_x
+        self.map_canvas.background_y = layout.background_y
         self.map_canvas.grid_size = layout.grid_size
         self.current_background_path = layout.background_path
         if layout.background_path:
-            if self.map_canvas.load_background_image(layout.background_path):
+            if self.map_canvas.load_background_image(layout.background_path, layout.canvas_width, layout.canvas_height):
                 self.map_canvas.redraw_grid(layout.grid_size)
         else:
+            self.map_canvas.background_x = 0.0
+            self.map_canvas.background_y = 0.0
             self.map_canvas.draw_default_grid(layout.canvas_width, layout.canvas_height, layout.grid_size)
 
     def save_current_layout_state(self) -> None:
@@ -112,6 +120,8 @@ class AppLayoutActions:
         layout.canvas_height = int(rect.height())
         layout.grid_size = self.map_canvas.grid_size
         layout.background_scale = self.map_canvas.background_scale
+        layout.background_x = self.map_canvas.background_x
+        layout.background_y = self.map_canvas.background_y
         layout.background_path = getattr(self, "current_background_path", layout.background_path)
         self.camera_manager.update_layout(layout)
 

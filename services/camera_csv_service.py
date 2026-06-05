@@ -49,16 +49,19 @@ def import_cameras_from_csv(file_path: str | Path) -> list[Camera]:
             if port is None:
                 continue
             camera_id = (row.get("id") or "").strip() or f"dev_{uuid.uuid4().hex[:8]}"
+            ip_address = (row.get("ip_address") or "").strip()
+            ping_value = (row.get("ping_enabled") or "").strip()
+            ping_enabled = ping_value not in {"0", "false", "False"} if ping_value else bool(ip_address)
             cameras.append(
                 Camera(
                     id=camera_id,
                     name=(row.get("name") or "").strip(),
-                    ip_address=(row.get("ip_address") or "").strip(),
+                    ip_address=ip_address,
                     port=port,
                     camera_type=(row.get("camera_type") or "Fixed").strip(),
                     device_kind=(row.get("device_kind") or "Camera").strip(),
                     variant=(row.get("variant") or row.get("camera_type") or "Fixed").strip(),
-                    ping_enabled=(row.get("ping_enabled") or "1").strip() not in {"0", "false", "False"},
+                    ping_enabled=ping_enabled,
                     zone=(row.get("zone") or "").strip(),
                     notes=(row.get("notes") or "").strip(),
                 )

@@ -3,9 +3,9 @@
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import QPointF, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap
-from PyQt6.QtWidgets import QGraphicsItem, QGraphicsLineItem, QGraphicsPixmapItem, QGraphicsView
+from PyQt6.QtWidgets import QGraphicsItem, QGraphicsLineItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsView
 
 from models.camera_data_model import Camera
 from models.canvas_layer_model import CanvasLayer
@@ -99,6 +99,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     layer_object_selected = pyqtSignal(str, str)
     history_step_started = pyqtSignal(str)
     history_step_finished = pyqtSignal(str)
+    background_position_changed = pyqtSignal(float, float)
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -109,7 +110,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate)
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, True)
-        self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing, True)
+        self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing, False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -126,8 +127,14 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self.device_catalog: dict[str, Camera] = {}
         self.grid_items: list[QGraphicsItem] = []
         self.background_item: QGraphicsPixmapItem | None = None
+        self.background_move_outline: QGraphicsRectItem | None = None
         self.canvas_bounds_item: QGraphicsItem | None = None
         self.background_map_visible = True
+        self.background_x = 0.0
+        self.background_y = 0.0
+        self.is_moving_background = False
+        self.background_move_start_scene_pos = QPointF()
+        self.background_move_start_pos = QPointF()
         self.snap_to_grid_enabled = False
         self.grid_visible = False
         self.grid_size = 20
@@ -168,8 +175,10 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self._layers_changed_suspend_count = 0
         self._layers_changed_pending = False
         self.topology_focus_id = ""
+        self.topology_selected_ids: set[str] = set()
         self.topology_highlight_ids: set[str] = set()
         self.topology_upstream_link_ids: set[str] = set()
+        self.topology_link_roles: dict[str, str] = {}
         self.topology_blink_phase = False
         self._applying_topology_highlight = False
         self.topology_blink_timer = QTimer(self)
@@ -191,6 +200,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         item.set_edit_callback(self.camera_edit_requested.emit)
         item.set_location_image_callback(self.camera_location_image_requested.emit)
         item.set_ping_callback(self.camera_ping_requested.emit)
+        item.set_remove_callback(self.unplace_camera_from_canvas)
         item.set_move_callback(self.camera_moved.emit)
         item.set_rotation_callback(self.camera_rotated.emit)
         item.set_scale_callback(self.camera_resized.emit)
@@ -292,11 +302,20 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         if self.drawing_mode != DrawingMode.SELECT:
             self.clear_topology_highlight()
         if self.drawing_mode == DrawingMode.PAN:
+            self._hide_background_move_outline()
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.setCursor(Qt.CursorShape.OpenHandCursor)
             self.scene.clearSelection()
             self._set_item_interaction_suspended(True)
             return
+        if self.drawing_mode == DrawingMode.MOVE_BACKGROUND:
+            self.scene.clearSelection()
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self._set_item_interaction_suspended(True)
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+            self._show_background_move_outline()
+            return
+        self._hide_background_move_outline()
         self.setDragMode(self._drag_mode_for_current_mode())
         self._set_item_interaction_suspended(False)
         self.setCursor(Qt.CursorShape.ArrowCursor if self.drawing_mode == DrawingMode.SELECT else Qt.CursorShape.CrossCursor)
@@ -337,18 +356,13 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         return ", ".join(dict.fromkeys(ips))
 
     def refresh_device_links(self) -> None:
-        """Render topology links related to the single selected device."""
+        """Render topology links related to the current topology focus."""
         self._remove_device_link_items()
-        selected_id = self._selected_device_id()
-        if not selected_id:
+        if not self.topology_link_roles:
             self._sync_link_animation_timer()
             return
-        downstream_links = self._downstream_links(selected_id)
-        upstream_links = self._upstream_path_links(selected_id)
-        related_links = [*downstream_links, *upstream_links]
         seen: set[str] = set()
-        upstream_ids = {link.id for link in upstream_links}
-        for link in related_links:
+        for link in self._topology_links_from_roles():
             if link.id in seen:
                 continue
             seen.add(link.id)
@@ -361,7 +375,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
                 (source.pos().x(), source.pos().y(), target.pos().x(), target.pos().y()),
                 self._request_delete_device_link,
                 lambda: self.drawing_mode,
-                "upstream" if link.id in upstream_ids else "downstream",
+                self.topology_link_roles.get(link.id, "downstream"),
             )
             self.scene.addItem(line)
             self.device_link_items.append(line)
@@ -376,28 +390,32 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
         return self._set_topology_focus(device_id, center=center, select_item=True)
 
+    def highlight_device_topologies(self, device_ids: list[str], center: bool = False) -> bool:
+        """Select several devices and highlight the union of their topology paths."""
+        return self._set_topology_focus_many(device_ids, center=center, select_items=True)
+
     def _set_topology_focus(self, device_id: str, center: bool = False, select_item: bool = False) -> bool:
-        item = self.camera_items.get(device_id)
-        if item is None or self._item_effective_locked(item) or not item.isVisible():
+        return self._set_topology_focus_many([device_id], center=center, select_items=select_item)
+
+    def _set_topology_focus_many(self, device_ids: list[str], center: bool = False, select_items: bool = False) -> bool:
+        selected_ids = self._valid_topology_focus_ids(device_ids)
+        if not selected_ids:
             self.clear_topology_highlight()
             return False
-
-        downstream_links = self._downstream_links(device_id)
-        upstream_links = self._upstream_path_links(device_id)
-        highlight_ids = {device_id}
-        for link in [*downstream_links, *upstream_links]:
-            highlight_ids.update({link.source_device_id, link.target_device_id})
-
+        highlight_ids, link_roles = self._topology_state_for_devices(selected_ids)
         self._applying_topology_highlight = True
         try:
-            if select_item:
+            if select_items:
                 self.scene.clearSelection()
-                item.setSelected(True)
+                for camera_id in selected_ids:
+                    self.camera_items[camera_id].setSelected(True)
             if center:
-                self.centerOn(item)
-            self.topology_focus_id = device_id
+                self.centerOn(self.camera_items[selected_ids[0]])
+            self.topology_focus_id = selected_ids[0] if len(selected_ids) == 1 else ""
+            self.topology_selected_ids = set(selected_ids)
             self.topology_highlight_ids = highlight_ids
-            self.topology_upstream_link_ids = {link.id for link in upstream_links}
+            self.topology_upstream_link_ids = {link_id for link_id, role in link_roles.items() if role == "upstream"}
+            self.topology_link_roles = link_roles
             self._apply_topology_highlight_roles()
             self.refresh_device_links()
         finally:
@@ -406,13 +424,16 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def clear_topology_highlight(self) -> None:
         """Clear transient topology highlight state without changing persisted data."""
-        if not self.topology_focus_id and not self.topology_highlight_ids:
+        if not self.topology_focus_id and not self.topology_selected_ids and not self.topology_highlight_ids and not self.topology_link_roles:
             return
         self.topology_focus_id = ""
+        self.topology_selected_ids = set()
         self.topology_highlight_ids = set()
         self.topology_upstream_link_ids = set()
+        self.topology_link_roles = {}
         for item in self.camera_items.values():
             item.set_topology_highlight("")
+        self.refresh_device_links()
 
     def _handle_selection_changed(self) -> None:
         if self._applying_topology_highlight:
@@ -436,7 +457,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         if selected_id:
             self._set_topology_focus(selected_id, center=False, select_item=False)
             return
-        if self.topology_focus_id:
+        if self.topology_focus_id or self.topology_selected_ids:
             self.clear_topology_highlight()
         self.refresh_device_links()
 
@@ -448,7 +469,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def _apply_topology_highlight_roles(self) -> None:
         for camera_id, item in self.camera_items.items():
-            if camera_id == self.topology_focus_id:
+            if camera_id in self.topology_selected_ids:
                 item.set_topology_highlight("selected", self.topology_blink_phase)
             elif camera_id in self.topology_highlight_ids:
                 item.set_topology_highlight("related", self.topology_blink_phase)
@@ -540,10 +561,13 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         image.fill(Qt.GlobalColor.transparent)
         selected_items = [item for item in self.scene.selectedItems()]
         bounds_visible = bool(self.canvas_bounds_item is not None and self.canvas_bounds_item.isVisible())
+        outline_visible = bool(self.background_move_outline is not None and self.background_move_outline.isVisible())
 
         self.scene.clearSelection()
         if self.canvas_bounds_item is not None:
             self.canvas_bounds_item.setVisible(False)
+        if self.background_move_outline is not None:
+            self.background_move_outline.setVisible(False)
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -551,6 +575,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         painter.end()
         if self.canvas_bounds_item is not None:
             self.canvas_bounds_item.setVisible(bounds_visible)
+        if self.background_move_outline is not None:
+            self.background_move_outline.setVisible(outline_visible)
 
         for item in selected_items:
             if item.scene() is self.scene and item.isVisible():
@@ -585,6 +611,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def mousePressEvent(self, event: Any) -> None:
         """Start map panning when the middle button is pressed."""
+        if self._start_background_move(event):
+            return
         if self._start_drawing(event):
             return
 
@@ -606,6 +634,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def mouseMoveEvent(self, event: Any) -> None:
         """Pan the map while the middle button is held."""
+        if self._update_background_move(event):
+            return
         if self._update_drawing_preview(event):
             return
 
@@ -624,6 +654,8 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def mouseReleaseEvent(self, event: Any) -> None:
         """Stop map panning."""
+        if self._finish_background_move(event):
+            return
         if self._finish_drawing(event):
             return
 
@@ -645,10 +677,15 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
     def keyPressEvent(self, event: Any) -> None:
         """Enable left-button panning while Space is held."""
         if event.key() == Qt.Key.Key_Escape:
+            self._cancel_background_move()
             self._cancel_interaction()
             self._commit_select_interaction_history()
             event.accept()
             return
+        if event.key() in {Qt.Key.Key_Delete, Qt.Key.Key_Backspace}:
+            if self.delete_selected_drawings():
+                event.accept()
+                return
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -721,6 +758,7 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
 
     def _cancel_interaction(self) -> None:
         self.is_panning = False
+        self._cancel_background_move()
         self.pending_device_link_source_id = ""
         self._remove_preview_item()
         self.drawing_start_pos = None
@@ -733,6 +771,10 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         if self.drawing_mode == DrawingMode.PAN:
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif self.drawing_mode == DrawingMode.MOVE_BACKGROUND:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+            self._show_background_move_outline()
         else:
             self.setDragMode(self._drag_mode_for_current_mode())
             self.setCursor(Qt.CursorShape.ArrowCursor if self.drawing_mode == DrawingMode.SELECT else Qt.CursorShape.CrossCursor)
@@ -741,10 +783,118 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         selected = [item.camera.id for item in self.scene.selectedItems() if item.data(1) == "camera" and isinstance(item, CameraItem)]
         return selected[0] if len(selected) == 1 else ""
 
+    def _valid_topology_focus_ids(self, device_ids: list[str]) -> list[str]:
+        valid_ids: list[str] = []
+        for device_id in dict.fromkeys(str(item) for item in device_ids if str(item)):
+            item = self.camera_items.get(device_id)
+            if item is None or self._item_effective_locked(item) or not item.isVisible():
+                continue
+            valid_ids.append(device_id)
+        return valid_ids
+
+    def _topology_state_for_devices(self, device_ids: list[str]) -> tuple[set[str], dict[str, str]]:
+        highlight_ids = set(device_ids)
+        link_roles: dict[str, str] = {}
+        for device_id in device_ids:
+            downstream_links = self._downstream_links(device_id)
+            upstream_links = self._upstream_path_links(device_id)
+            for link in downstream_links:
+                highlight_ids.update({link.source_device_id, link.target_device_id})
+                link_roles.setdefault(link.id, "downstream")
+            for link in upstream_links:
+                highlight_ids.update({link.source_device_id, link.target_device_id})
+                link_roles[link.id] = "upstream"
+        return highlight_ids, link_roles
+
+    def _topology_links_from_roles(self) -> list[DeviceLink]:
+        role_ids = set(self.topology_link_roles)
+        return [link for link in self.device_links if link.id in role_ids]
+
     def _drag_mode_for_current_mode(self) -> QGraphicsView.DragMode:
         if self.drawing_mode == DrawingMode.SELECT:
             return QGraphicsView.DragMode.RubberBandDrag
         return QGraphicsView.DragMode.NoDrag
+
+    def _start_background_move(self, event: Any) -> bool:
+        if (
+            self.drawing_mode != DrawingMode.MOVE_BACKGROUND
+            or event.button() != Qt.MouseButton.LeftButton
+            or self.background_item is None
+        ):
+            return False
+        scene_pos = self.mapToScene(event.position().toPoint())
+        if not self.background_item.sceneBoundingRect().contains(scene_pos):
+            return False
+        self.is_moving_background = True
+        self.background_move_start_scene_pos = scene_pos
+        self.background_move_start_pos = QPointF(self.background_x, self.background_y)
+        self._begin_history_step("background_move")
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        event.accept()
+        return True
+
+    def _update_background_move(self, event: Any) -> bool:
+        if not self.is_moving_background:
+            return False
+        scene_pos = self.mapToScene(event.position().toPoint())
+        delta = scene_pos - self.background_move_start_scene_pos
+        self.set_background_position(
+            self.background_move_start_pos.x() + delta.x(),
+            self.background_move_start_pos.y() + delta.y(),
+            expand_canvas=True,
+        )
+        self._update_background_move_outline()
+        event.accept()
+        return True
+
+    def _finish_background_move(self, event: Any) -> bool:
+        if not self.is_moving_background or event.button() != Qt.MouseButton.LeftButton:
+            return False
+        self.is_moving_background = False
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.background_position_changed.emit(self.background_x, self.background_y)
+        self._commit_history_step("background_move")
+        event.accept()
+        return True
+
+    def _cancel_background_move(self) -> bool:
+        if not self.is_moving_background:
+            return False
+        self.is_moving_background = False
+        self.set_background_position(
+            self.background_move_start_pos.x(),
+            self.background_move_start_pos.y(),
+            expand_canvas=True,
+        )
+        self._update_background_move_outline()
+        self.setCursor(Qt.CursorShape.SizeAllCursor if self.drawing_mode == DrawingMode.MOVE_BACKGROUND else Qt.CursorShape.ArrowCursor)
+        self._commit_history_step("background_move")
+        return True
+
+    def _show_background_move_outline(self) -> None:
+        if self.background_item is None or not self.background_item.isVisible():
+            self._hide_background_move_outline()
+            return
+        if self.background_move_outline is None:
+            self.background_move_outline = QGraphicsRectItem()
+            self.background_move_outline.setData(1, "background_move_outline")
+            self.background_move_outline.setZValue(-28)
+            self.scene.addItem(self.background_move_outline)
+        pen = QPen(QColor(DANGER), 2.0, Qt.PenStyle.DashLine)
+        self.background_move_outline.setPen(pen)
+        self.background_move_outline.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._update_background_move_outline()
+        self.background_move_outline.setVisible(True)
+
+    def _hide_background_move_outline(self) -> None:
+        if self.background_move_outline is not None:
+            self.background_move_outline.setVisible(False)
+
+    def _update_background_move_outline(self) -> None:
+        if self.background_move_outline is None or self.background_item is None:
+            return
+        rect = self.background_item.sceneBoundingRect()
+        self.background_move_outline.setRect(QRectF(rect))
 
     def _apply_canvas_background(self) -> None:
         """Apply a view-only canvas background that is not part of scene exports."""
@@ -813,6 +963,17 @@ class MapCanvas(MapCanvasSurface, MapCanvasDrawingEvents, MapCanvasActions, QGra
         self._begin_history_step("device_link_delete")
         self.device_link_delete_requested.emit(source_device_id, target_device_id)
         self._commit_history_step("device_link_delete")
+
+    def unplace_camera_from_canvas(self, camera_id: str) -> int:
+        """Remove one placed device marker from the canvas via the normal delete flow."""
+        item = self.camera_items.get(camera_id)
+        if item is None:
+            return 0
+        self.scene.clearSelection()
+        if not item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+            item.setFlags(item.flags() | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        item.setSelected(True)
+        return self.delete_selected_drawings()
 
     def _related_device_links(self, root_id: str) -> list[DeviceLink]:
         related: list[DeviceLink] = []

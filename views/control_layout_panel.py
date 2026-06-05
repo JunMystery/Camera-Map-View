@@ -470,6 +470,7 @@ class ControlLayoutPanel(QWidget):
     camera_import_requested = pyqtSignal()
     camera_export_requested = pyqtSignal()
     camera_focus_requested = pyqtSignal(str)
+    camera_focus_many_requested = pyqtSignal(object)
     device_link_requested = pyqtSignal(str, str)
     device_unlink_requested = pyqtSignal(object)
     device_parent_change_requested = pyqtSignal(str, str)
@@ -785,12 +786,14 @@ class ControlLayoutPanel(QWidget):
     def _emit_focused_camera(self) -> None:
         if self._refreshing:
             return
-        item = self.tree_widget.currentItem()
-        if item is None or item.data(0, Qt.ItemDataRole.UserRole + 1) != "camera":
+        placed_ids = [device_id for device_id in self._selected_device_ids() if device_id in self.placed_ids]
+        if len(placed_ids) > 1:
+            self.camera_focus_many_requested.emit(placed_ids)
             return
-        camera_id = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
-        if camera_id in self.placed_ids:
-            self.camera_focus_requested.emit(camera_id)
+        if len(placed_ids) == 1:
+            self.camera_focus_requested.emit(placed_ids[0])
+            return
+        self.camera_focus_many_requested.emit([])
 
     def _set_mode(self, show_placed: bool) -> None:
         self.show_placed = show_placed

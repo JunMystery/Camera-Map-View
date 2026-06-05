@@ -95,6 +95,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.camera_panel.camera_import_requested.connect(self.import_cameras_csv)
         self.camera_panel.camera_export_requested.connect(self.export_cameras_csv)
         self.camera_panel.camera_focus_requested.connect(self.focus_camera_from_panel)
+        self.camera_panel.camera_focus_many_requested.connect(self.focus_cameras_from_panel)
         self.ping_service.status_updated.connect(self.camera_controller.handle_camera_status_updated)
         self.refresh_ping_cameras()
         self.ping_service.start()
@@ -155,6 +156,11 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         self.select_action.setObjectName("select")
         self.select_action.setCheckable(True)
         self.select_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.SELECT))
+
+        self.move_background_action = QAction(self)
+        self.move_background_action.setObjectName("move_background")
+        self.move_background_action.setCheckable(True)
+        self.move_background_action.triggered.connect(lambda: self.set_canvas_mode(DrawingMode.MOVE_BACKGROUND))
 
         self.toggle_pan_select_action = QAction(self.map_canvas)
         self.toggle_pan_select_action.setObjectName("toggle_pan_select")
@@ -294,6 +300,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
     def set_canvas_mode(self, mode: DrawingMode) -> None:
         mode_actions = {
             DrawingMode.PAN: self.pan_action,
+            DrawingMode.MOVE_BACKGROUND: self.move_background_action,
             DrawingMode.SELECT: self.select_action,
             DrawingMode.LINE: self.draw_line_action,
             DrawingMode.RECTANGLE: self.draw_rectangle_action,
@@ -324,7 +331,14 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         )
         self.map_canvas.history_step_started.connect(self.canvas_history.begin)
         self.map_canvas.history_step_finished.connect(self.canvas_history.commit)
+        self.map_canvas.background_position_changed.connect(self._handle_background_position_changed)
         self._sync_history_actions()
+
+    def _handle_background_position_changed(self, _x: float, _y: float) -> None:
+        """Persist a visual background move into the active layout."""
+        if self.current_layout_id:
+            self.save_current_layout_state()
+            self._sync_layout_dependent_actions()
 
     def _restore_canvas_history(self, snapshot: CanvasStateSnapshot) -> None:
         restore_layout_snapshot(self.camera_manager, snapshot)
@@ -366,6 +380,16 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
         if hasattr(self, "layers_panel"):
             self.layers_panel.clear_selection_silently()
         self.map_canvas.highlight_device_topology(camera_id, center=True)
+
+    def focus_cameras_from_panel(self, camera_ids: object) -> None:
+        """Select and highlight multiple placed devices chosen in the control panel."""
+        if not self.current_layout_id:
+            return
+        self.set_canvas_mode(DrawingMode.SELECT)
+        if hasattr(self, "layers_panel"):
+            self.layers_panel.clear_selection_silently()
+        ids = [str(camera_id) for camera_id in camera_ids if str(camera_id)] if isinstance(camera_ids, list) else []
+        self.map_canvas.highlight_device_topologies(ids, center=False)
 
     def add_text_annotation(self) -> None:
         """Add or edit a text annotation."""
@@ -514,10 +538,12 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
 
         image_path, _, _ = imported
         self._begin_canvas_history("background_load")
-        success = self.map_canvas.load_background_image(image_path)
+        rect = self.map_canvas.scene.sceneRect()
+        success = self.map_canvas.load_background_image(image_path, int(rect.width()), int(rect.height()))
         if success:
             self.current_background_path = image_path
             self.save_current_layout_state()
+            self._sync_layout_dependent_actions()
             self._commit_canvas_history("background_load")
             self.status_bar.showMessage(t("status.map_loaded", filename=os.path.basename(image_path)), 5000)
             return
@@ -537,8 +563,11 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             return
         self._begin_canvas_history("background_unload")
         self.map_canvas.unload_background_image()
+        if self.map_canvas.drawing_mode == DrawingMode.MOVE_BACKGROUND:
+            self.set_canvas_mode(DrawingMode.PAN)
         self.current_background_path = ""
         self.save_current_layout_state()
+        self._sync_layout_dependent_actions()
         self._commit_canvas_history("background_unload")
         self.status_bar.showMessage(t("status.map_unloaded"), 5000)
 
@@ -577,6 +606,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             "unload_map_action",
             "export_package_action",
             "export_snapshot_action",
+            "move_background_action",
             "draw_line_action",
             "draw_rectangle_action",
             "draw_rounded_rectangle_action",
@@ -614,6 +644,8 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.layers_panel.setEnabled(has_layout)
         if hasattr(self, "drawing_tools_panel"):
             self.drawing_tools_panel.setEnabled(has_layout)
+        if hasattr(self, "move_background_action"):
+            self.move_background_action.setEnabled(has_layout and self.map_canvas.background_item is not None)
         self._sync_history_actions()
 
     def set_language(self, language: str) -> None:
@@ -639,6 +671,7 @@ class MainWindow(AppLayoutActions, AppSettingsActions, AppPackageActions, AppCam
             self.zoom_fit_action.setText(t("action.zoom_fit"))
             self.settings_action.setText(t("action.settings"))
             self.pan_action.setText(t("action.pan"))
+            self.move_background_action.setText(t("action.move_background"))
             self.select_action.setText(t("action.select"))
             self.draw_line_action.setText(t("action.draw_line"))
             self.draw_rectangle_action.setText(t("action.draw_rectangle"))

@@ -201,7 +201,8 @@ def _restore_layout_row(connection: Any, row: dict[str, Any]) -> None:
         """
         UPDATE map_layouts
         SET name = ?, background_path = ?, grid_size = ?, canvas_width = ?,
-            canvas_height = ?, background_scale = ?, updated_at = CURRENT_TIMESTAMP
+            canvas_height = ?, background_scale = ?, background_x = ?, background_y = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (
@@ -211,6 +212,8 @@ def _restore_layout_row(connection: Any, row: dict[str, Any]) -> None:
             int(row.get("canvas_width") or 4000),
             int(row.get("canvas_height") or 3000),
             float(row.get("background_scale") or 1.0),
+            float(row.get("background_x") or 0.0),
+            float(row.get("background_y") or 0.0),
             row.get("id", ""),
         ),
     )

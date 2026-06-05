@@ -41,6 +41,8 @@ class CameraDbManager:
                 canvas_width INTEGER DEFAULT 4000,
                 canvas_height INTEGER DEFAULT 3000,
                 background_scale REAL DEFAULT 1.0,
+                background_x REAL DEFAULT 0.0,
+                background_y REAL DEFAULT 0.0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -183,6 +185,8 @@ class CameraDbManager:
                 "canvas_width": "INTEGER DEFAULT 4000",
                 "canvas_height": "INTEGER DEFAULT 3000",
                 "background_scale": "REAL DEFAULT 1.0",
+                "background_x": "REAL DEFAULT 0.0",
+                "background_y": "REAL DEFAULT 0.0",
             },
         )
         self.execute("DROP INDEX IF EXISTS idx_cameras_ip_address")

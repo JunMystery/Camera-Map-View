@@ -33,6 +33,8 @@ class LayoutPropertiesDialog(QDialog):
         self.canvas_height_input = self._spin(500, 20000, layout.canvas_height)
         self.grid_size_input = self._spin(5, 200, layout.grid_size)
         self.background_scale_input = self._double_spin(0.1, 5.0, layout.background_scale)
+        self.background_x_input = self._double_spin(0.0, 20000.0, layout.background_x)
+        self.background_y_input = self._double_spin(0.0, 20000.0, layout.background_y)
         self.error_label = QLabel("", self)
         self.error_label.setStyleSheet(f"color: {DANGER};")
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
@@ -53,6 +55,8 @@ class LayoutPropertiesDialog(QDialog):
             canvas_width=self.canvas_width_input.value(),
             canvas_height=self.canvas_height_input.value(),
             background_scale=self.background_scale_input.value(),
+            background_x=self.background_x_input.value(),
+            background_y=self.background_y_input.value(),
         )
 
     def retranslate(self) -> None:
@@ -72,6 +76,8 @@ class LayoutPropertiesDialog(QDialog):
         form.addRow(t("settings.canvas_height"), self.canvas_height_input)
         form.addRow(t("settings.grid_size"), self.grid_size_input)
         form.addRow(t("settings.background_scale"), self.background_scale_input)
+        form.addRow(t("settings.background_x"), self.background_x_input)
+        form.addRow(t("settings.background_y"), self.background_y_input)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(self.error_label)

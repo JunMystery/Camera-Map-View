@@ -24,8 +24,11 @@ class CameraLayoutOperations:
         layout = MapLayout(id=f"layout_{uuid.uuid4().hex[:8]}", name=name)
         self.db.execute(
             """
-            INSERT INTO map_layouts (id, name, background_path, grid_size, canvas_width, canvas_height, background_scale)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO map_layouts (
+                id, name, background_path, grid_size, canvas_width, canvas_height,
+                background_scale, background_x, background_y
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 layout.id,
@@ -35,6 +38,8 @@ class CameraLayoutOperations:
                 layout.canvas_width,
                 layout.canvas_height,
                 layout.background_scale,
+                layout.background_x,
+                layout.background_y,
             ),
         )
         return layout
@@ -45,7 +50,8 @@ class CameraLayoutOperations:
             """
             UPDATE map_layouts
             SET name = ?, background_path = ?, grid_size = ?, canvas_width = ?,
-                canvas_height = ?, background_scale = ?, updated_at = CURRENT_TIMESTAMP
+                canvas_height = ?, background_scale = ?, background_x = ?, background_y = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
@@ -55,6 +61,8 @@ class CameraLayoutOperations:
                 layout.canvas_width,
                 layout.canvas_height,
                 layout.background_scale,
+                layout.background_x,
+                layout.background_y,
                 layout.id,
             ),
         )
@@ -76,4 +84,6 @@ class CameraLayoutOperations:
             canvas_width=row["canvas_width"] or 4000,
             canvas_height=row["canvas_height"] or 3000,
             background_scale=row["background_scale"] or 1.0,
+            background_x=row["background_x"] or 0.0,
+            background_y=row["background_y"] or 0.0,
         )

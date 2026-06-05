@@ -33,6 +33,7 @@ class AppDocks:
         """Create the fixed floating drawing tools widget."""
         mode_actions = [
             self.pan_action,
+            self.move_background_action,
             self.select_action,
             self.draw_line_action,
             self.draw_freehand_action,

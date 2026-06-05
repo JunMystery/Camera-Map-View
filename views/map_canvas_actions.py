@@ -87,7 +87,17 @@ class MapCanvasActions:
 
     def unload_background_image(self) -> None:
         """Remove the map background while preserving cameras and drawings."""
-        self.draw_default_grid()
+        rect = self.scene.sceneRect()
+        width = int(rect.width()) or 4000
+        height = int(rect.height()) or 3000
+        self.remove_background_item()
+        self.background_source_pixmap = None
+        self.background_x = 0.0
+        self.background_y = 0.0
+        self.remove_grid_items()
+        self.scene.setSceneRect(0, 0, width, height)
+        self._ensure_canvas_bounds(width, height)
+        self._add_grid_items(width, height, self.grid_size)
         self.fit_in_view()
 
     def remove_background_item(self) -> None:
@@ -95,6 +105,8 @@ class MapCanvasActions:
         if self.background_item is not None:
             self.scene.removeItem(self.background_item)
             self.background_item = None
+        if getattr(self, "background_move_outline", None) is not None:
+            self.background_move_outline.setVisible(False)
 
     def remove_grid_items(self) -> None:
         """Remove only grid layer items."""

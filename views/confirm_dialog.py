@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayo
 from config.i18n import t
 from views.ui_theme import DANGER, TEXT_WHITE
 
+CONFIRM_BUTTON_WIDTH = 96
+
 
 class ConfirmDialog(QDialog):
     """Show Yes on the left and a red No button on the right."""
@@ -17,6 +19,9 @@ class ConfirmDialog(QDialog):
         self.message_label.setWordWrap(True)
         self.yes_button = QPushButton(t("button.yes"), self)
         self.no_button = QPushButton(t("button.no"), self)
+        for button in (self.yes_button, self.no_button):
+            button.setMinimumWidth(CONFIRM_BUTTON_WIDTH)
+            button.setFixedHeight(34)
         self.no_button.setObjectName("confirmNoButton")
         self.no_button.setStyleSheet(
             f"""

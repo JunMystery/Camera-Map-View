@@ -14,7 +14,7 @@ from models.device_link_model import DeviceLink
 from models.drawing_shape_model import DrawingShape
 from models.map_layout_model import MapLayout
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def export_map_package(
@@ -54,7 +54,7 @@ def import_map_package(path: str | Path, manager: CameraDataManager) -> str | No
         return None
     with ZipFile(source, "r") as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-        if int(manifest.get("schema_version", 0)) not in {1, 2, 3, 4, SCHEMA_VERSION}:
+        if int(manifest.get("schema_version", 0)) not in {1, 2, 3, 4, 5, SCHEMA_VERSION}:
             return None
         layout = _create_import_layout(manager, manifest)
         asset_dir = Path("assets/maps") / f"package_{layout.id}"
@@ -119,6 +119,8 @@ def _create_import_layout(manager: CameraDataManager, manifest: dict[str, object
     layout.canvas_width = int(layout_data.get("canvas_width") or layout.canvas_width)
     layout.canvas_height = int(layout_data.get("canvas_height") or layout.canvas_height)
     layout.background_scale = float(layout_data.get("background_scale") or layout.background_scale)
+    layout.background_x = float(layout_data.get("background_x") or 0.0)
+    layout.background_y = float(layout_data.get("background_y") or 0.0)
     return layout
 
 

@@ -433,6 +433,8 @@ class LayersPanel(QWidget):
 
     def _on_canvas_layer_object_selected(self, object_type: str, object_id: str) -> None:
         """Highlight the object row that corresponds to a canvas selection."""
+        if self._refreshing:
+            return
         # object_type and object_id may be empty strings to indicate cleared selection
         self._refreshing = True
         self.tree.blockSignals(True)
@@ -491,8 +493,6 @@ class LayersPanel(QWidget):
                     obj_id = str(item.data(0, ROLE_ID))
                     objects_to_select.append((obj_type, obj_id))
             
-            self.tree.blockSignals(False)
-            
             # Set active layer (use last selected layer)
             if layer_ids_to_activate:
                 self.canvas.set_active_layer(list(layer_ids_to_activate)[-1])
@@ -502,7 +502,10 @@ class LayersPanel(QWidget):
                 self.canvas.scene.clearSelection()
             for obj_type, obj_id in objects_to_select:
                 self.canvas.select_layer_object(obj_type, obj_id, clear_existing=False)
+            self.tree.blockSignals(False)
         finally:
+            if self.tree.signalsBlocked():
+                self.tree.blockSignals(False)
             self._refreshing = False
 
     def _handle_click(self, item: QTreeWidgetItem, column: int) -> None:
@@ -561,7 +564,7 @@ class LayersPanel(QWidget):
     def _delete_selected(self) -> None:
         item = self.tree.currentItem()
         if item is not None and item.data(0, ROLE_TYPE) == "object":
-            self._delete_selected_object(item)
+            self._delete_selected_objects()
             return
         self._delete_selected_layer()
 
@@ -581,14 +584,35 @@ class LayersPanel(QWidget):
         self._commit_history("layer_delete")
         self._show_status(t("status.layer_deleted", count=1), 5000)
 
-    def _delete_selected_object(self, item: QTreeWidgetItem) -> None:
-        object_type = str(item.data(0, ROLE_OBJECT_TYPE))
-        object_id = str(item.data(0, ROLE_ID))
-        if not self.canvas.select_layer_object(object_type, object_id):
+    def _delete_selected_objects(self) -> None:
+        object_items = [item for item in self.tree.selectedItems() if item.data(0, ROLE_TYPE) == "object"]
+        current = self.tree.currentItem()
+        if current is not None and current.data(0, ROLE_TYPE) == "object" and current not in object_items:
+            object_items.append(current)
+        if not object_items:
             return
+        object_keys = [
+            (str(item.data(0, ROLE_OBJECT_TYPE)), str(item.data(0, ROLE_ID)))
+            for item in object_items
+        ]
+        self._refreshing = True
+        try:
+            self.canvas.scene.clearSelection()
+            for object_type, object_id in object_keys:
+                self.canvas.select_layer_object(object_type, object_id, clear_existing=False)
+        finally:
+            self._refreshing = False
         count = self.canvas.delete_selected_drawings()
         self.refresh()
-        if count:
+        if not count:
+            return
+        camera_count = sum(1 for object_type, _object_id in object_keys if object_type == "camera")
+        drawing_count = count - camera_count
+        if camera_count and not drawing_count:
+            self._show_status(t("status.device_unplaced", count=camera_count), 5000)
+        elif drawing_count and not camera_count:
+            self._show_status(t("status.drawing_deleted", count=count), 5000)
+        else:
             self._show_status(t("status.drawing_deleted", count=count), 5000)
 
     def _move_selected_index(self, direction: int) -> None:
