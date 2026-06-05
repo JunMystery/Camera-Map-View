@@ -22,3 +22,8 @@ assets/data/*.db.bak
 bin/
 .pytest_*/
 .continue/
+
+*/assets/maps
+*/assets/data
+/assets/maps/
+/assets/data/
