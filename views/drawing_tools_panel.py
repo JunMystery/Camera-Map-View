@@ -44,10 +44,25 @@ class DrawingToolsPanel(QWidget):
         content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(6)
-        content_layout.addWidget(self._action_button(mode_actions[0]))
-        content_layout.addWidget(self._action_button(mode_actions[1]))
-        content_layout.addWidget(self._menu_button("Draw", mode_actions[2:4], "draw_line"))
-        content_layout.addWidget(self._menu_button("Shapes", mode_actions[4:], "shapes"))
+        mode_by_name = {action.objectName(): action for action in mode_actions}
+        for action_name in ("pan", "select", "move_background"):
+            action = mode_by_name.get(action_name)
+            if action is not None:
+                content_layout.addWidget(self._action_button(action))
+        draw_actions = [mode_by_name[name] for name in ("draw_line", "draw_freehand") if name in mode_by_name]
+        shape_actions = [
+            mode_by_name[name]
+            for name in (
+                "draw_rectangle",
+                "draw_rounded_rectangle",
+                "draw_ellipse",
+                "draw_triangle",
+                "draw_zone",
+            )
+            if name in mode_by_name
+        ]
+        content_layout.addWidget(self._menu_button("Draw", draw_actions, "draw_line"))
+        content_layout.addWidget(self._menu_button("Shapes", shape_actions, "shapes"))
         content_layout.addWidget(self._separator())
         for action in edit_actions:
             if action.objectName() == "clear_fill_color":

@@ -16,7 +16,7 @@ from config.i18n import (
     set_language,
     t,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QImage, QKeySequence
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QPushButton, QTabWidget, QToolButton
 
@@ -149,6 +149,7 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
         assert not window.layers_dock.isVisible()
         assert window.pan_action.isChecked()
         assert not window.select_action.isChecked()
+        assert window.move_background_action.text() == "Move background"
         assert window.map_canvas.drawing_mode == DrawingMode.PAN
         assert window.toggle_pan_select_action.shortcut().toString() == "1"
         window.toggle_pan_select_action.trigger()
@@ -273,6 +274,11 @@ def test_main_window_language_switch_retranslates_visible_text(monkeypatch) -> N
             for button in window.drawing_tools_panel.findChildren(QToolButton)
             if button.defaultAction() is not None
         ]
+        assert window.move_background_action in [
+            button.defaultAction()
+            for button in window.drawing_tools_panel.findChildren(QToolButton)
+            if button.defaultAction() is not None
+        ]
         assert all(action.objectName() != "show_dvr" for menu in window.drawing_tools_panel.findChildren(QMenu) for action in menu.actions())
         assert window.pan_action.isChecked()
         assert not window.select_action.isChecked()
@@ -385,7 +391,16 @@ def test_settings_theme_dropdown_applies_immediately() -> None:
 
 def test_layout_properties_dialog_returns_layout_canvas_values() -> None:
     app = QApplication.instance() or QApplication([])
-    layout = MapLayout("layout_a", "Original", canvas_width=1200, canvas_height=900, grid_size=25, background_scale=1.2)
+    layout = MapLayout(
+        "layout_a",
+        "Original",
+        canvas_width=1200,
+        canvas_height=900,
+        grid_size=25,
+        background_scale=1.2,
+        background_x=30.0,
+        background_y=40.0,
+    )
     dialog = LayoutPropertiesDialog(layout)
 
     dialog.name_input.setText("Edited")
@@ -393,6 +408,8 @@ def test_layout_properties_dialog_returns_layout_canvas_values() -> None:
     dialog.canvas_height_input.setValue(1500)
     dialog.grid_size_input.setValue(40)
     dialog.background_scale_input.setValue(1.5)
+    dialog.background_x_input.setValue(125.0)
+    dialog.background_y_input.setValue(250.0)
     edited = dialog.get_layout()
 
     assert edited.name == "Edited"
@@ -400,6 +417,8 @@ def test_layout_properties_dialog_returns_layout_canvas_values() -> None:
     assert edited.canvas_height == 1500
     assert edited.grid_size == 40
     assert edited.background_scale == 1.5
+    assert edited.background_x == 125.0
+    assert edited.background_y == 250.0
     app.processEvents()
 
 
@@ -435,6 +454,8 @@ def test_confirm_dialog_has_red_no_button_and_fixed_order() -> None:
     assert DANGER in dialog.no_button.styleSheet()
     assert dialog.no_button.styleSheet().count("#ffffff") >= 1
     assert dialog.yes_button.isDefault()
+    assert dialog.yes_button.minimumWidth() == dialog.no_button.minimumWidth()
+    assert dialog.yes_button.height() == dialog.no_button.height()
     button_row = dialog.layout().itemAt(1).layout()
     assert isinstance(button_row.itemAt(1).widget(), QPushButton)
     assert button_row.itemAt(1).widget() is dialog.yes_button
@@ -495,10 +516,10 @@ def test_main_window_applies_background_layout_grid_size(monkeypatch, tmp_path) 
     assert image.save(str(image_path))
     manager.db.execute(
         """
-        INSERT INTO map_layouts (id, name, background_path, grid_size, canvas_width, canvas_height)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO map_layouts (id, name, background_path, grid_size, canvas_width, canvas_height, background_x, background_y)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("default", "Default Layout", str(image_path), 32, 1200, 900),
+        ("default", "Default Layout", str(image_path), 32, 1200, 900, 200.0, 150.0),
     )
     monkeypatch.setattr("views.app_view_window.load_app_settings", lambda: DEFAULT_SETTINGS.copy())
     monkeypatch.setattr("views.app_view_window.CameraDataManager", lambda: manager)
@@ -508,6 +529,9 @@ def test_main_window_applies_background_layout_grid_size(monkeypatch, tmp_path) 
 
     assert window.map_canvas.background_item is not None
     assert window.map_canvas.grid_size == 32
+    assert window.map_canvas.background_item.pos() == QPointF(200.0, 150.0)
+    assert window.map_canvas.scene.sceneRect().width() == 1200
+    assert window.map_canvas.scene.sceneRect().height() == 900
 
     layout = manager.get_layout("default")
     assert layout is not None

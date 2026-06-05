@@ -25,6 +25,7 @@
     <string key="action.zoom_fit">Căn vừa màn hình</string>
     <string key="action.select">Chọn</string>
     <string key="action.pan">Di chuyển bản đồ</string>
+    <string key="action.move_background">Di chuyển nền</string>
     <string key="action.draw_line">Vẽ đường</string>
     <string key="action.draw_rectangle">Vẽ khung</string>
     <string key="action.draw_rounded_rectangle">Vẽ khung bo góc</string>
@@ -111,6 +112,8 @@
     <string key="settings.canvas_height">Chiều cao canvas</string>
     <string key="settings.grid_size">Kích thước grid</string>
     <string key="settings.background_scale">Tỉ lệ bản đồ nền</string>
+    <string key="settings.background_x">Tọa độ X bản đồ nền</string>
+    <string key="settings.background_y">Tọa độ Y bản đồ nền</string>
     <string key="settings.light_theme">Light theme</string>
     <string key="settings.theme">Giao diện</string>
     <string key="settings.theme_dark">Tối</string>
@@ -179,6 +182,7 @@ Ghi chú: {notes}</string>
     <string key="camera.context.edit">Chỉnh sửa thông số</string>
     <string key="camera.context.location_image">Ảnh vị trí</string>
     <string key="camera.context.ping">Ping</string>
+    <string key="camera.context.remove_from_canvas">Gỡ khỏi canvas</string>
     <string key="camera_location_image.title">Ảnh vị trí - {name}</string>
     <string key="camera_location_image.zoom_in">Phóng to</string>
     <string key="camera_location_image.zoom_out">Thu nhỏ</string>
@@ -215,6 +219,7 @@ Ghi chú: {notes}</string>
     <string key="status.camera_update_failed">Không thể cập nhật thiết bị. IP có thể đã bị trùng.</string>
     <string key="status.camera_updated">Đã cập nhật thiết bị '{name}'.</string>
     <string key="status.drawing_deleted">Đã xóa {count} đối tượng.</string>
+    <string key="status.device_unplaced">Đã gỡ {count} thiết bị khỏi canvas.</string>
     <string key="status.camera_rotated">Đã xoay {count} camera.</string>
     <string key="status.location_image_missing">Camera '{name}' chưa có ảnh vị trí.</string>
     <string key="status.active_ping_started">Đã mở ping chủ động tới {ip_address}.</string>

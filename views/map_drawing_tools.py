@@ -656,6 +656,7 @@ class DrawingMode(str, Enum):
     """Available canvas interaction modes."""
 
     PAN = "pan"
+    MOVE_BACKGROUND = "move_background"
     SELECT = "select"
     LINE = "line"
     RECTANGLE = "rectangle"

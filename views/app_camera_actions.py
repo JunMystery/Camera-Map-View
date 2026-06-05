@@ -17,7 +17,7 @@ class AppCameraActions:
         if not self.current_layout_id:
             self.status_bar.showMessage(t("status.no_layout"), 7000)
             return
-        camera = Camera(f"dev_{uuid.uuid4().hex[:8]}", "", "192.168.1.1")
+        camera = Camera(f"dev_{uuid.uuid4().hex[:8]}", "", "", status=False, ping_enabled=False)
         dialog = CameraPropertiesDialog(camera, self, self.camera_manager.get_all_cameras(self.current_layout_id), [], [])
         if dialog.exec() != dialog.DialogCode.Accepted:
             return

@@ -14,3 +14,5 @@ class MapLayout:
     canvas_width: int = 4000
     canvas_height: int = 3000
     background_scale: float = 1.0
+    background_x: float = 0.0
+    background_y: float = 0.0

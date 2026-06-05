@@ -69,6 +69,7 @@ class MapCanvasSurface:
 
     def resize_canvas(self, width: int, height: int) -> None:
         """Resize the usable canvas area."""
+        width, height = self._content_size_for_canvas(width, height)
         self.scene.setSceneRect(0, 0, width, height)
         self._ensure_canvas_bounds(width, height)
         self.redraw_grid()
@@ -78,16 +79,15 @@ class MapCanvasSurface:
         self.background_scale = max(0.1, scale)
         if self.background_item is None or self.background_source_pixmap is None:
             return
-        pixmap = self.background_source_pixmap.scaled(
-            int(self.background_source_pixmap.width() * self.background_scale),
-            int(self.background_source_pixmap.height() * self.background_scale),
-        )
+        pixmap = self._scaled_background_pixmap()
         self.background_item.setPixmap(pixmap)
-        self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
-        self._ensure_canvas_bounds(pixmap.width(), pixmap.height())
+        self.background_item.setPos(self.background_x, self.background_y)
+        width, height = self._content_size_for_canvas(int(self.scene.sceneRect().width()), int(self.scene.sceneRect().height()))
+        self.scene.setSceneRect(0, 0, width, height)
+        self._ensure_canvas_bounds(width, height)
         self.redraw_grid()
 
-    def load_background_image(self, file_path: str) -> bool:
+    def load_background_image(self, file_path: str, canvas_width: int | None = None, canvas_height: int | None = None) -> bool:
         """Load an image file as the map background."""
         if not os.path.exists(file_path):
             return False
@@ -97,19 +97,55 @@ class MapCanvasSurface:
                 return False
             self.remove_background_item()
             self.background_source_pixmap = pixmap
-            scaled = pixmap.scaled(int(pixmap.width() * self.background_scale), int(pixmap.height() * self.background_scale))
+            scaled = self._scaled_background_pixmap()
             self.background_item = QGraphicsPixmapItem(scaled)
             self.background_item.setData(2, BACKGROUND_LAYER)
+            self.background_item.setPos(self.background_x, self.background_y)
             self.background_item.setVisible(self.background_map_visible and self.layer_visibility.get(BACKGROUND_LAYER, True))
             self.scene.addItem(self.background_item)
-            self.scene.setSceneRect(0, 0, scaled.width(), scaled.height())
-            self._ensure_canvas_bounds(scaled.width(), scaled.height())
+            base_width = canvas_width if canvas_width is not None else int(self.scene.sceneRect().width())
+            base_height = canvas_height if canvas_height is not None else int(self.scene.sceneRect().height())
+            width, height = self._content_size_for_canvas(base_width, base_height)
+            self.scene.setSceneRect(0, 0, width, height)
+            self._ensure_canvas_bounds(width, height)
             self.redraw_grid()
             self.apply_layer_z_values()
             self.fit_in_view()
             return True
         except Exception:
             return False
+
+    def set_background_position(self, x: float, y: float, expand_canvas: bool = True) -> None:
+        """Move the background image without moving canvas objects."""
+        self.background_x = max(0.0, float(x))
+        self.background_y = max(0.0, float(y))
+        if self.background_item is not None:
+            self.background_item.setPos(self.background_x, self.background_y)
+        if expand_canvas:
+            rect = self.scene.sceneRect()
+            width, height = self._content_size_for_canvas(int(rect.width()), int(rect.height()))
+            if int(rect.width()) != width or int(rect.height()) != height:
+                self.scene.setSceneRect(0, 0, width, height)
+                self._ensure_canvas_bounds(width, height)
+                self.redraw_grid()
+
+    def _scaled_background_pixmap(self) -> QPixmap:
+        if self.background_source_pixmap is None:
+            return QPixmap()
+        return self.background_source_pixmap.scaled(
+            max(1, int(self.background_source_pixmap.width() * self.background_scale)),
+            max(1, int(self.background_source_pixmap.height() * self.background_scale)),
+        )
+
+    def _content_size_for_canvas(self, canvas_width: int, canvas_height: int) -> tuple[int, int]:
+        width = max(1, int(canvas_width or 0))
+        height = max(1, int(canvas_height or 0))
+        if self.background_item is None:
+            return width, height
+        pixmap = self.background_item.pixmap()
+        width = max(width, int(self.background_x + pixmap.width()))
+        height = max(height, int(self.background_y + pixmap.height()))
+        return width, height
 
     def _add_grid_items(self, width: int, height: int, grid_size: int) -> None:
         grid_color = QColor(GRID_LIGHT) if self.light_theme else QColor(GRID_DARK)

@@ -214,6 +214,8 @@ def test_background_load_and_unload_preserve_map_items(tmp_path) -> None:
 
     assert canvas.load_background_image(str(image_path))
     assert canvas.background_item is not None
+    assert canvas.scene.sceneRect().width() == 4000
+    assert canvas.scene.sceneRect().height() == 3000
     assert camera.scene() is canvas.scene
     assert shape_item is not None
     assert shape_item.scene() is canvas.scene
@@ -223,6 +225,70 @@ def test_background_load_and_unload_preserve_map_items(tmp_path) -> None:
     assert camera.scene() is canvas.scene
     assert shape_item.scene() is canvas.scene
     assert canvas.grid_items
+    assert canvas.scene.sceneRect().width() == 4000
+    assert canvas.scene.sceneRect().height() == 3000
+    app.processEvents()
+
+
+def test_background_position_expands_canvas_without_locking_to_image(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(1200, 900)
+    canvas.background_x = 200.0
+    canvas.background_y = 150.0
+    image_path = tmp_path / "offset_map.png"
+    image = QImage(100, 80, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+
+    assert canvas.load_background_image(str(image_path), 1200, 900)
+
+    assert canvas.background_item is not None
+    assert canvas.background_item.pos() == QPointF(200.0, 150.0)
+    assert canvas.scene.sceneRect().width() == 1200
+    assert canvas.scene.sceneRect().height() == 900
+
+    canvas.set_background_position(1300.0, 950.0)
+
+    assert canvas.scene.sceneRect().width() == 1400
+    assert canvas.scene.sceneRect().height() == 1030
+    app.processEvents()
+
+
+def test_move_background_mode_drags_and_escape_rolls_back(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    canvas.resize_canvas(300, 200)
+    image_path = tmp_path / "move_map.png"
+    image = QImage(100, 80, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+    assert canvas.load_background_image(str(image_path), 300, 200)
+    changed = []
+    canvas.background_position_changed.connect(lambda x, y: changed.append((x, y)))
+
+    canvas.set_drawing_mode(DrawingMode.MOVE_BACKGROUND)
+    start_view = canvas.mapFromScene(QPointF(10, 10))
+    end_view = canvas.mapFromScene(QPointF(40, 50))
+    canvas.mousePressEvent(_MouseEvent(Qt.MouseButton.LeftButton, start_view.x(), start_view.y()))
+    canvas.mouseMoveEvent(_MouseEvent(Qt.MouseButton.LeftButton, end_view.x(), end_view.y()))
+    canvas.mouseReleaseEvent(_MouseEvent(Qt.MouseButton.LeftButton, end_view.x(), end_view.y()))
+
+    assert changed
+    assert canvas.background_item is not None
+    assert canvas.background_item.pos().x() > 0
+    assert canvas.background_item.pos().y() > 0
+
+    moved_x = canvas.background_x
+    moved_y = canvas.background_y
+    start_view = canvas.mapFromScene(QPointF(moved_x + 10, moved_y + 10))
+    end_view = canvas.mapFromScene(QPointF(moved_x + 80, moved_y + 90))
+    canvas.mousePressEvent(_MouseEvent(Qt.MouseButton.LeftButton, start_view.x(), start_view.y()))
+    canvas.mouseMoveEvent(_MouseEvent(Qt.MouseButton.LeftButton, end_view.x(), end_view.y()))
+    canvas.keyPressEvent(_KeyEvent(Qt.Key.Key_Escape))
+
+    assert canvas.background_x == moved_x
+    assert canvas.background_y == moved_y
     app.processEvents()
 
 
@@ -273,6 +339,9 @@ def test_camera_dialog_disables_save_for_invalid_input() -> None:
     dialog.name_input.setText("Lobby")
     dialog.ip_input.setText("999.0.0.10")
     assert not save_button.isEnabled()
+
+    dialog.ip_input.setText("")
+    assert save_button.isEnabled()
     app.processEvents()
 
 
@@ -423,6 +492,7 @@ def test_device_dialog_uses_device_name_label_and_preserves_rotation() -> None:
     assert dialog.name_label.text() == "Tên thiết bị"
     assert not hasattr(dialog, "rotation_slider")
     assert not hasattr(dialog, "dvr_input")
+    assert not hasattr(dialog, "status_input")
     assert not dialog.fov_input.isHidden()
     assert [dialog.fov_input.itemData(index) for index in range(dialog.fov_input.count())] == [80, 180, 360]
     assert dialog.get_camera().rotation == 123.0
@@ -477,6 +547,23 @@ def test_device_dialog_pc_variants_are_available() -> None:
     ]
     assert dialog.ip_input.text() == ""
     assert dialog.button_box.button(QDialogButtonBox.StandardButton.Save).isEnabled()
+    app.processEvents()
+
+
+def test_device_dialog_blank_ip_disables_ping_and_camera_stays_blank() -> None:
+    app = QApplication.instance() or QApplication([])
+    dialog = CameraPropertiesDialog(Camera("device", "Camera A", "", ping_enabled=False))
+
+    assert dialog.ip_input.text() == ""
+    assert dialog.ping_input.isChecked() is False
+    assert dialog.button_box.button(QDialogButtonBox.StandardButton.Save).isEnabled()
+
+    dialog.ip_input.setText("10.0.0.10")
+    dialog.ping_input.setChecked(True)
+    dialog.ip_input.setText("")
+
+    assert dialog.ping_input.isChecked() is False
+    assert dialog.get_camera().status is False
     app.processEvents()
 
 
@@ -627,7 +714,26 @@ def test_camera_context_menu_order(monkeypatch) -> None:
     monkeypatch.setattr(QMenu, "exec", capture_exec)
     item.contextMenuEvent(_ContextMenuEvent())
 
-    assert captured == ["Ảnh vị trí", "Ping", "Chỉnh sửa thông số"]
+    assert captured == ["Ảnh vị trí", "Ping", "Chỉnh sửa thông số", "", "Gỡ khỏi canvas"]
+    app.processEvents()
+
+
+def test_camera_context_remove_action_uses_remove_callback(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    item = CameraItem(Camera("cam_test", "Lobby", "10.0.0.10"))
+    removed = []
+    item.set_remove_callback(removed.append)
+
+    def trigger_remove(menu: QMenu, _pos: object) -> None:
+        for action in menu.actions():
+            if action.text() == "Gỡ khỏi canvas":
+                action.trigger()
+                return
+
+    monkeypatch.setattr(QMenu, "exec", trigger_remove)
+    item.contextMenuEvent(_ContextMenuEvent())
+
+    assert removed == ["cam_test"]
     app.processEvents()
 
 
@@ -692,6 +798,26 @@ def test_camera_item_resize_handle_updates_scale() -> None:
 
     item._set_camera_scale(10.0)
     assert item.scale() == item.max_scale
+    app.processEvents()
+
+
+def test_camera_item_bounds_cover_selected_fov_and_handles_without_fov_hitbox() -> None:
+    app = QApplication.instance() or QApplication([])
+    item = CameraItem(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    bounds = item.boundingRect()
+
+    assert bounds.contains(QPointF(-153.0, 0.0))
+    assert bounds.contains(QPointF(153.0, 0.0))
+    assert bounds.contains(QPointF(0.0, -153.0))
+    assert bounds.contains(QPointF(0.0, 153.0))
+    assert bounds.contains(item._resize_handle_hit_rect().bottomRight())
+    assert bounds.contains(QPointF(51.0, 0.0))
+    assert bounds.contains(QPointF(32.0, -28.0))
+    assert bounds.contains(QPointF(58.0, 60.0))
+
+    item.setSelected(True)
+    assert not item.shape().contains(QPointF(120.0, 0.0))
     app.processEvents()
 
 
@@ -1045,6 +1171,36 @@ def test_layers_panel_multi_select_selects_all_objects_on_canvas() -> None:
     app.processEvents()
 
 
+def test_layers_panel_delete_unplaces_camera_and_deletes_drawing_object() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    deleted_cameras = []
+    deleted_drawings = []
+    canvas.camera_deleted.connect(deleted_cameras.append)
+    canvas.drawing_deleted.connect(deleted_drawings.append)
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    canvas.add_camera_item(Camera("cam_layer", "Layer Camera", "10.0.0.10"))
+    canvas.add_drawing_shape(DrawingShape("obj_layer", "Line", [0.0, 0.0, 10.0, 10.0]))
+    panel.refresh()
+    camera_item = panel._find_object_tree_item("camera", "cam_layer")
+    drawing_item = panel._find_object_tree_item("drawing", "obj_layer")
+    assert camera_item is not None
+    assert drawing_item is not None
+
+    panel.tree.setCurrentItem(camera_item)
+    camera_item.setSelected(True)
+    drawing_item.setSelected(True)
+    panel._delete_selected()
+
+    assert deleted_cameras == ["cam_layer"]
+    assert deleted_drawings == ["obj_layer"]
+    assert "cam_layer" not in canvas.camera_items
+    assert canvas._find_layer_object_item("drawing", "obj_layer") is None
+    app.processEvents()
+
+
 def test_layers_tree_drop_reorders_object_to_exact_index(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
@@ -1383,10 +1539,16 @@ def test_canvas_settings_resize_grid_and_background_scale(tmp_path) -> None:
     assert image.save(str(image_path))
     assert canvas.load_background_image(str(image_path))
     assert canvas.grid_size == 10
+    assert canvas.scene.sceneRect().width() == 1200
+    assert canvas.scene.sceneRect().height() == 900
+    canvas.set_background_position(100.0, 50.0)
     canvas.set_background_scale(2.0)
 
     assert canvas.background_item is not None
+    assert canvas.background_item.pos() == QPointF(100.0, 50.0)
     assert canvas.background_item.pixmap().width() == 200
+    assert canvas.scene.sceneRect().width() == 1200
+    assert canvas.scene.sceneRect().height() == 900
     app.processEvents()
 
 

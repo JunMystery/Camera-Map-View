@@ -25,6 +25,7 @@
     <string key="action.zoom_fit">Fit to window</string>
     <string key="action.select">Select</string>
     <string key="action.pan">Pan map</string>
+    <string key="action.move_background">Move background</string>
     <string key="action.draw_line">Draw line</string>
     <string key="action.draw_rectangle">Draw rectangle</string>
     <string key="action.draw_rounded_rectangle">Draw rounded rectangle</string>
@@ -111,6 +112,8 @@
     <string key="settings.canvas_height">Canvas height</string>
     <string key="settings.grid_size">Grid size</string>
     <string key="settings.background_scale">Background scale</string>
+    <string key="settings.background_x">Background X</string>
+    <string key="settings.background_y">Background Y</string>
     <string key="settings.light_theme">Light theme</string>
     <string key="settings.theme">Theme</string>
     <string key="settings.theme_dark">Dark</string>
@@ -179,6 +182,7 @@ Notes: {notes}</string>
     <string key="camera.context.edit">Edit properties</string>
     <string key="camera.context.location_image">Location image</string>
     <string key="camera.context.ping">Ping</string>
+    <string key="camera.context.remove_from_canvas">Remove from canvas</string>
     <string key="camera_location_image.title">Location image - {name}</string>
     <string key="camera_location_image.zoom_in">Zoom in</string>
     <string key="camera_location_image.zoom_out">Zoom out</string>
@@ -215,6 +219,7 @@ Notes: {notes}</string>
     <string key="status.camera_update_failed">Could not update device. The IP may already be in use.</string>
     <string key="status.camera_updated">Updated device '{name}'.</string>
     <string key="status.drawing_deleted">Deleted {count} item(s).</string>
+    <string key="status.device_unplaced">Removed {count} device(s) from canvas.</string>
     <string key="status.camera_rotated">Rotated {count} camera(s).</string>
     <string key="status.location_image_missing">Camera '{name}' has no location image.</string>
     <string key="status.active_ping_started">Started active ping to {ip_address}.</string>

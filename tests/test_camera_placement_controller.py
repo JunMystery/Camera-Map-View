@@ -112,6 +112,21 @@ class _WheelEvent:
         self.accepted = True
 
 
+class _KeyEvent:
+    def __init__(self, key: Qt.Key) -> None:
+        self._key = key
+        self.accepted = False
+
+    def key(self) -> Qt.Key:
+        return self._key
+
+    def isAutoRepeat(self) -> bool:
+        return False
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
 class _DragWheelEvent(_WheelEvent):
     def type(self):
         return QEvent.Type.Wheel
@@ -196,6 +211,31 @@ def test_canvas_unbinds_selected_camera_without_deleting_record() -> None:
 
     assert canvas.delete_selected_drawings() == 1
     saved = manager.get_camera("cam_01")
+    assert saved is not None
+    assert "cam_01" not in canvas.camera_items
+    assert "cam_01" in {camera.id for camera in manager.get_unplaced_cameras()}
+    panel.unplaced_button.click()
+    assert _camera_count(panel) == 5
+    app.processEvents()
+
+
+def test_delete_key_unplaces_selected_camera_without_deleting_record() -> None:
+    app = QApplication.instance() or QApplication([])
+    manager = CameraDataManager(":memory:")
+    _seed_default_devices(manager)
+    panel = CameraPanel()
+    canvas = MapCanvas()
+    controller = CameraPlacementController(panel, canvas, manager)
+    controller.load_cameras("default")
+    controller.handle_camera_dropped("cam_01", 100.0, 100.0)
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+    canvas.camera_items["cam_01"].setSelected(True)
+
+    event = _KeyEvent(Qt.Key.Key_Delete)
+    canvas.keyPressEvent(event)
+
+    saved = manager.get_camera("cam_01")
+    assert event.accepted is True
     assert saved is not None
     assert "cam_01" not in canvas.camera_items
     assert "cam_01" in {camera.id for camera in manager.get_unplaced_cameras()}
@@ -962,6 +1002,49 @@ def test_camera_panel_emits_focus_only_for_placed_devices() -> None:
     app.processEvents()
 
 
+def test_camera_panel_multi_select_emits_placed_devices_for_topology_highlight() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    router = Camera("router", "Router", "", device_kind=DEVICE_KIND_SERVER, ping_enabled=False)
+    switch_a = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, ping_enabled=False)
+    switch_b = Camera("switch_b", "Switch B", "", device_kind=DEVICE_KIND_SWITCH, ping_enabled=False)
+    cam_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    cam_b = Camera("cam_b", "Camera B", "10.0.0.11")
+    unplaced = Camera("cam_unplaced", "Unplaced", "10.0.0.12")
+    links = [
+        DeviceLink("link_a_switch", "default", "cam_a", "switch_a"),
+        DeviceLink("link_b_switch", "default", "cam_b", "switch_b"),
+        DeviceLink("link_switch_a_router", "default", "switch_a", "router"),
+        DeviceLink("link_switch_b_router", "default", "switch_b", "router"),
+    ]
+    many_focused = []
+    single_focused = []
+    panel.camera_focus_requested.connect(single_focused.append)
+    panel.camera_focus_many_requested.connect(many_focused.append)
+    panel.set_cameras([router, switch_a, switch_b, cam_a, cam_b, unplaced], {"router", "switch_a", "switch_b", "cam_a", "cam_b"}, links)
+    cam_a_item = _camera_item(panel, "cam_a")
+    cam_b_item = _camera_item(panel, "cam_b")
+
+    panel.tree_widget.clearSelection()
+    panel.tree_widget.setCurrentItem(cam_a_item)
+    cam_a_item.setSelected(True)
+    cam_b_item.setSelected(True)
+    panel._emit_focused_camera()
+
+    assert many_focused[-1] == ["cam_a", "cam_b"]
+    assert single_focused
+
+    panel.unplaced_button.click()
+    unplaced_item = _camera_item(panel, "cam_unplaced")
+    panel.tree_widget.clearSelection()
+    panel.tree_widget.setCurrentItem(unplaced_item)
+    unplaced_item.setSelected(True)
+    panel._emit_focused_camera()
+
+    assert many_focused[-1] == []
+    app.processEvents()
+
+
 def test_device_panel_filters_status_with_unlinked_group() -> None:
     app = QApplication.instance() or QApplication([])
     panel = CameraPanel()
@@ -1079,6 +1162,53 @@ def test_canvas_topology_highlight_marks_upstream_and_downstream_without_sibling
 
     canvas.scene.clearSelection()
 
+    assert all(not item.topology_highlight_role for item in canvas.camera_items.values())
+    assert canvas.device_link_items == []
+    app.processEvents()
+
+
+def test_canvas_multi_topology_highlight_unions_selected_devices_and_link_roles() -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    camera = Camera("cam_a", "Camera A", "10.0.0.10", position_x=0.0, position_y=0.0)
+    ap = Camera("ap_a", "AP A", "10.0.0.20", position_x=50.0, position_y=0.0, device_kind=DEVICE_KIND_SWITCH, ping_enabled=False)
+    switch = Camera("switch_a", "Switch A", "10.0.0.30", position_x=100.0, position_y=0.0, device_kind=DEVICE_KIND_SWITCH, ping_enabled=False)
+    router = Camera("router_a", "Router A", "10.0.0.40", position_x=150.0, position_y=0.0, device_kind=DEVICE_KIND_SERVER, ping_enabled=False)
+    pc = Camera("pc_a", "PC A", "10.0.0.50", position_x=100.0, position_y=50.0)
+    unrelated = Camera("pc_b", "PC B", "10.0.0.60", position_x=200.0, position_y=50.0)
+    for device in (camera, ap, switch, router, pc, unrelated):
+        canvas.add_camera_item(device)
+    canvas.set_device_links(
+        [
+            DeviceLink("link_cam_ap", "default", "cam_a", "ap_a"),
+            DeviceLink("link_ap_switch", "default", "ap_a", "switch_a"),
+            DeviceLink("link_pc_switch", "default", "pc_a", "switch_a"),
+            DeviceLink("link_switch_router", "default", "switch_a", "router_a"),
+        ]
+    )
+    canvas.set_drawing_mode(DrawingMode.SELECT)
+
+    assert canvas.highlight_device_topologies(["cam_a", "pc_a"], center=False)
+
+    assert canvas.camera_items["cam_a"].topology_highlight_role == "selected"
+    assert canvas.camera_items["pc_a"].topology_highlight_role == "selected"
+    assert canvas.camera_items["ap_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["switch_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["router_a"].topology_highlight_role == "related"
+    assert canvas.camera_items["pc_b"].topology_highlight_role == ""
+    assert {
+        item.camera.id for item in canvas.scene.selectedItems() if item.data(1) == "camera"
+    } == {"cam_a", "pc_a"}
+    roles = {item.link.id: item.link_role for item in canvas.device_link_items}
+    assert roles == {
+        "link_cam_ap": "upstream",
+        "link_ap_switch": "upstream",
+        "link_pc_switch": "upstream",
+        "link_switch_router": "upstream",
+    }
+    assert len(canvas.device_link_items) == 4
+
+    assert not canvas.highlight_device_topologies(["missing"], center=False)
     assert all(not item.topology_highlight_role for item in canvas.camera_items.values())
     assert canvas.device_link_items == []
     app.processEvents()

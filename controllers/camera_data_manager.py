@@ -7,11 +7,11 @@ from pathlib import Path
 from config.i18n import t
 from models.camera_data_model import Camera
 from models.camera_db_manager import CameraDbManager
+from models.device_catalog import DEVICE_KIND_CAMERA
 from controllers.camera_layer_operations import CameraLayerOperations
 from controllers.camera_layout_operations import CameraLayoutOperations
 from controllers.device_link_operations import DeviceLinkOperations
 from controllers.drawing_shape_operations import DrawingShapeOperations
-from models.device_catalog import DEVICE_KIND_CAMERA
 from services.camera_csv_service import export_cameras_to_csv, import_cameras_from_csv
 from utils.validators import is_non_empty_text, is_valid_ipv4
 
@@ -427,8 +427,6 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
         has_valid_identity = is_non_empty_text(camera.id) and is_non_empty_text(camera.name) and 1 <= camera.port <= 65535
         if not has_valid_identity:
             return False
-        if camera.device_kind == DEVICE_KIND_CAMERA:
-            return is_valid_ipv4(camera.ip_address)
         return not camera.ip_address or is_valid_ipv4(camera.ip_address)
 
     def _camera_id_for_ip(self, ip_address: str, layout_id: str) -> str:

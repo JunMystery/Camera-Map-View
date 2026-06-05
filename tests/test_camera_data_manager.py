@@ -60,6 +60,8 @@ def test_reject_duplicate_ip_address() -> None:
 
     assert manager.add_camera(Camera("cam_a", "A", "10.0.0.10"))
     assert not manager.add_camera(Camera("cam_b", "B", "10.0.0.10"))
+    assert manager.add_camera(Camera("cam_blank_a", "Blank A", "", ping_enabled=False))
+    assert manager.add_camera(Camera("cam_blank_b", "Blank B", "", ping_enabled=False))
 
 
 def test_reject_invalid_camera_input() -> None:
@@ -69,6 +71,7 @@ def test_reject_invalid_camera_input() -> None:
     assert not manager.add_camera(Camera("cam_test", "", "10.0.0.10"))
     assert not manager.add_camera(Camera("cam_test", "Lobby", "999.0.0.10"))
     assert not manager.add_camera(Camera("cam_test", "Lobby", "10.0.0.10", port=0))
+    assert manager.add_camera(Camera("cam_blank", "Blank Camera", "", ping_enabled=False))
 
 
 def test_network_device_allows_blank_ip_and_links_are_layout_scoped() -> None:
@@ -462,6 +465,24 @@ def test_camera_csv_import_generates_missing_id_and_skips_empty_or_bad_rows(tmp_
     assert cameras[0].ip_address == "10.0.0.30"
 
 
+def test_camera_csv_import_blank_ip_defaults_ping_disabled(tmp_path) -> None:
+    manager = CameraDataManager(":memory:")
+    _create_default_layout(manager)
+    csv_path = tmp_path / "blank_ip.csv"
+    csv_path.write_text(
+        "id,name,ip_address,port,camera_type,device_kind,variant\n"
+        "blank_ip,Blank IP,,554,Fixed,Camera,Fixed\n",
+        encoding="utf-8",
+    )
+
+    assert manager.import_cameras_csv(csv_path) == 1
+
+    saved = manager.get_camera("blank_ip")
+    assert saved is not None
+    assert saved.ip_address == ""
+    assert saved.ping_enabled is False
+
+
 def test_camera_csv_import_rejects_ip_conflict_and_other_layout_id(tmp_path) -> None:
     manager = CameraDataManager(":memory:")
     _create_default_layout(manager)
@@ -506,11 +527,15 @@ def test_layout_crud_and_data_isolation() -> None:
 
     layout.canvas_width = 5000
     layout.background_scale = 1.5
+    layout.background_x = 123.0
+    layout.background_y = 456.0
     assert manager.update_layout(layout)
     saved = manager.get_layout(layout.id)
     assert saved is not None
     assert saved.canvas_width == 5000
     assert saved.background_scale == 1.5
+    assert saved.background_x == 123.0
+    assert saved.background_y == 456.0
 
     assert manager.delete_layout(layout.id)
     assert manager.get_all_cameras(layout.id) == []
@@ -539,6 +564,8 @@ def test_map_package_export_and_import_current_layout(tmp_path, monkeypatch) -> 
     photo.write_bytes(b"jpg")
     layout.background_path = str(background)
     layout.canvas_width = 1200
+    layout.background_x = 77.0
+    layout.background_y = 88.0
     manager.update_layout(layout)
     manager.add_camera(Camera("cam_pkg", "Package Cam", "10.0.0.30", location_image_path=str(photo)), is_placed=True)
     manager.add_camera(Camera("server_pkg", "Package Server", "", device_kind=DEVICE_KIND_SERVER, variant="Rack", ping_enabled=False), is_placed=True)
@@ -575,6 +602,8 @@ def test_map_package_export_and_import_current_layout(tmp_path, monkeypatch) -> 
     imported_layout = manager.get_layout(imported_id)
     assert imported_layout is not None
     assert imported_layout.canvas_width == 1200
+    assert imported_layout.background_x == 77.0
+    assert imported_layout.background_y == 88.0
     assert imported_layout.background_path
     imported_cameras = manager.get_placed_cameras(imported_id)
     assert len(imported_cameras) == 2

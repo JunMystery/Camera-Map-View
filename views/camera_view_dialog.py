@@ -64,7 +64,7 @@ class CameraPropertiesDialog(QDialog):
         self.badge_input.textChanged.connect(self._normalize_badge_text)
         self.ip_input = QLineEdit(camera.ip_address, self)
         self.ip_input.setValidator(self._ip_validator())
-        self.ip_input.textChanged.connect(self._update_save_state)
+        self.ip_input.textChanged.connect(self._handle_ip_changed)
 
         self.port_input = QSpinBox(self)
         self.port_input.setRange(1, 65535)
@@ -80,9 +80,6 @@ class CameraPropertiesDialog(QDialog):
         self.zone_input = QLineEdit(camera.zone, self)
         self.ping_input = QCheckBox(self)
         self.ping_input.setChecked(camera.ping_enabled)
-
-        self.status_input = QCheckBox(self)
-        self.status_input.setChecked(camera.status)
 
         self.notes_input = QPlainTextEdit(camera.notes, self)
         self.notes_input.setMinimumHeight(80)
@@ -143,7 +140,7 @@ class CameraPropertiesDialog(QDialog):
             position_y=self.camera.position_y,
             rotation=self.camera.rotation,
             display_scale=self.camera.display_scale,
-            status=self.status_input.isChecked(),
+            status=self.camera.status,
             last_check=self.camera.last_check,
             notes=self.notes_input.toPlainText().strip(),
             zone=self.zone_input.text().strip(),
@@ -184,9 +181,8 @@ class CameraPropertiesDialog(QDialog):
 
     def _update_save_state(self) -> None:
         has_name = bool(self.name_input.text().strip())
-        device_kind = str(self.kind_input.currentData() or self.camera.device_kind)
         ip_text = self.ip_input.text().strip()
-        has_valid_ip = self.ip_input.hasAcceptableInput() if ip_text or device_kind == DEVICE_KIND_CAMERA else True
+        has_valid_ip = self.ip_input.hasAcceptableInput() if ip_text else True
         is_valid = has_name and has_valid_ip
         if not has_name:
             self.error_label.setText(t("validation.device_name_required"))
@@ -268,8 +264,6 @@ class CameraPropertiesDialog(QDialog):
         row = QWidget(self)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.status_input)
-        layout.addSpacing(18)
         layout.addWidget(self.ping_input)
         layout.addStretch(1)
         return row
@@ -314,7 +308,6 @@ class CameraPropertiesDialog(QDialog):
         self.location_image_label.setText(t("camera_dialog.location_image"))
         self.connections_label.setText(t("device_dialog.connections"))
         self.manage_connections_button.setText(t("device_dialog.manage_connections"))
-        self.status_input.setText(t("camera.status.online"))
         self.upload_location_button.setText(t("camera_dialog.upload_location_image"))
         self.remove_location_button.setText(t("camera_dialog.remove_location_image"))
         self._retranslate_device_kinds()
@@ -358,9 +351,11 @@ class CameraPropertiesDialog(QDialog):
         if kind != DEVICE_KIND_CAMERA and not self.camera.name:
             self.ip_input.clear()
             self.ping_input.setChecked(False)
-        elif kind == DEVICE_KIND_CAMERA and not self.ip_input.text().strip():
-            self.ip_input.setText("192.168.1.1")
-            self.ping_input.setChecked(True)
+        self._update_save_state()
+
+    def _handle_ip_changed(self, value: str) -> None:
+        if not value.strip():
+            self.ping_input.setChecked(False)
         self._update_save_state()
 
     def _normalize_badge_text(self, value: str) -> None:

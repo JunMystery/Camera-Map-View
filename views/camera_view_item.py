@@ -34,6 +34,7 @@ class CameraItem(QGraphicsItem):
         self.edit_callback: Callable[[str], None] | None = None
         self.location_image_callback: Callable[[str], None] | None = None
         self.ping_callback: Callable[[str], None] | None = None
+        self.remove_callback: Callable[[str], None] | None = None
         self.move_callback: Callable[[str, float, float], None] | None = None
         self.rotation_callback: Callable[[str, float], None] | None = None
         self.scale_callback: Callable[[str, float], None] | None = None
@@ -114,6 +115,10 @@ class CameraItem(QGraphicsItem):
         """Register a callback for active ping requests."""
         self.ping_callback = callback
 
+    def set_remove_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a callback for removing the marker from the canvas."""
+        self.remove_callback = callback
+
     def set_move_callback(self, callback: Callable[[str, float, float], None]) -> None:
         """Register a callback for persisted position updates."""
         self.move_callback = callback
@@ -138,13 +143,16 @@ class CameraItem(QGraphicsItem):
 
     def set_topology_highlight(self, role: str = "", blink_phase: bool = False) -> None:
         """Apply transient topology highlighting from the canvas."""
+        previous_role = self.topology_highlight_role
         self.topology_highlight_role = role if role in {"selected", "related"} else ""
         self.topology_blink_phase = blink_phase
+        if previous_role != self.topology_highlight_role:
+            self.update(self.boundingRect())
         self.update()
 
     def boundingRect(self) -> QRectF:
         """Return the drawable area for icon, field-of-view wedge, and label."""
-        return QRectF(-170, -170, 340, 220)
+        return QRectF(-180, -180, 360, 360)
 
     def shape(self) -> QPainterPath:
         """Return the selectable body/handle shape, excluding the FOV overlay."""
@@ -266,6 +274,7 @@ class CameraItem(QGraphicsItem):
             self.resize_start_distance = max(self._scene_distance_from_center(event), 1.0)
             self.resize_start_scale = self.scale()
             self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            self.update(self.boundingRect())
             event.accept()
             return
         if self.camera.device_kind != DEVICE_KIND_CAMERA:
@@ -279,6 +288,7 @@ class CameraItem(QGraphicsItem):
             self.rotation_start_value = self.camera.rotation
             self.setCursor(Qt.CursorShape.SizeAllCursor)
             self._apply_rotation_from_point(event.pos())
+            self.update(self.boundingRect())
             event.accept()
             return
         super().mousePressEvent(event)
@@ -300,11 +310,13 @@ class CameraItem(QGraphicsItem):
         if self.is_resizing and event.button() == Qt.MouseButton.LeftButton:
             self.is_resizing = False
             self.unsetCursor()
+            self.update(self.boundingRect())
             event.accept()
             return
         if self.is_rotating and event.button() == Qt.MouseButton.LeftButton:
             self.is_rotating = False
             self.unsetCursor()
+            self.update(self.boundingRect())
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -318,9 +330,13 @@ class CameraItem(QGraphicsItem):
         ping_action.triggered.connect(self._request_ping)
         edit_action = QAction(t("camera.context.edit"), menu)
         edit_action.triggered.connect(self._request_edit)
+        remove_action = QAction(t("camera.context.remove_from_canvas"), menu)
+        remove_action.triggered.connect(self._request_remove)
         menu.addAction(location_image_action)
         menu.addAction(ping_action)
         menu.addAction(edit_action)
+        menu.addSeparator()
+        menu.addAction(remove_action)
         menu.exec(event.screenPos())
 
     def _request_edit(self) -> None:
@@ -334,6 +350,10 @@ class CameraItem(QGraphicsItem):
     def _request_ping(self) -> None:
         if self.ping_callback is not None:
             self.ping_callback(self.camera.id)
+
+    def _request_remove(self) -> None:
+        if self.remove_callback is not None:
+            self.remove_callback(self.camera.id)
 
     def cancel_interaction(self) -> bool:
         """Cancel an in-progress camera handle edit and restore the original value."""
