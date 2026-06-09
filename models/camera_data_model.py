@@ -33,6 +33,7 @@ class Camera:
     z_index: int = 0
     object_visible: bool = True
     badge_text: str = ""
+    layer_display_name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the camera to a serializable dictionary."""

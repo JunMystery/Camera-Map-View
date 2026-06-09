@@ -262,7 +262,7 @@ class MapCanvasActions:
             label = object_id
             if object_type == "camera" and isinstance(item, CameraItem):
                 object_id = item.camera.id
-                label = item.camera.name
+                label = item.camera.layer_display_name or item.camera.name
             elif object_type == "drawing":
                 label = self._drawing_label(item)
             rows.append(
@@ -379,9 +379,7 @@ class MapCanvasActions:
             if item is None:
                 return False
             self._begin_history_step("object_rename")
-            item.camera.name = display_name
-            item.update_tooltip()
-            item.update()
+            item.camera.layer_display_name = display_name
         elif object_type == "drawing":
             target = next((item for item in self.scene.items() if str(item.data(0) or "") == object_id), None)
             if target is None:
@@ -529,6 +527,41 @@ class MapCanvasActions:
         self._commit_history_step("object_z")
         return True
 
+    def move_layer_objects_to_index(
+        self,
+        object_keys: list[tuple[str, str]],
+        layer_id: str,
+        target_index: int,
+    ) -> bool:
+        """Move several objects to an explicit z-order index within one layer."""
+        layer_id = self._resolve_layer_id(layer_id)
+        if not object_keys:
+            return False
+        key_set = set(object_keys)
+        items_by_key = {
+            (str(item.data(1) or ""), self._layer_object_id(item)): item
+            for item in self._items_for_layer(layer_id)
+        }
+        moving = [items_by_key[key] for key in object_keys if key in items_by_key]
+        if not moving:
+            return False
+        siblings = sorted(
+            self._items_for_layer(layer_id),
+            key=lambda candidate: (int(candidate.data(7) or 0), str(candidate.data(0) or "")),
+        )
+        remaining = [item for item in siblings if (str(item.data(1) or ""), self._layer_object_id(item)) not in key_set]
+        moving_sorted = [item for item in siblings if item in moving]
+        target_index = max(0, min(target_index, len(remaining)))
+        new_order = [*remaining[:target_index], *moving_sorted, *remaining[target_index:]]
+        if new_order == siblings:
+            return False
+        self._begin_history_step("object_z")
+        self._apply_object_order(new_order)
+        self.apply_layer_z_values()
+        self._emit_layers_changed()
+        self._commit_history_step("object_z")
+        return True
+
     def top_selectable_item_at(self, view_pos: Any) -> Any | None:
         """Return the highest visible, unlocked canvas object at a viewport position."""
         scene_pos = self.mapToScene(view_pos)
@@ -617,6 +650,38 @@ class MapCanvasActions:
         self._commit_history_step("object_layer_move")
         return True
 
+    def move_layer_objects_to_layer(self, object_keys: list[tuple[str, str]], layer_id: str) -> bool:
+        """Move several objects to another layer while preserving their relative order."""
+        layer_id = self._resolve_layer_id(layer_id)
+        if layer_id not in self.annotation_layer_order or not object_keys:
+            return False
+        self._begin_history_step("object_layer_move")
+        moved_items: list[Any] = []
+        for object_type, object_id in object_keys:
+            item = self._find_layer_object_item(object_type, object_id)
+            if item is None:
+                continue
+            item.setData(2, layer_id)
+            if object_type == "camera" and isinstance(item, CameraItem):
+                item.camera.layer_id = layer_id
+                self.object_layer_changed.emit("camera", item.camera.id, layer_id)
+                moved_items.append(item)
+            elif object_type == "drawing":
+                self.object_layer_changed.emit("drawing", object_id, layer_id)
+                moved_items.append(item)
+        if not moved_items:
+            self._commit_history_step("object_layer_move")
+            return False
+        siblings = sorted(
+            self._items_for_layer(layer_id),
+            key=lambda candidate: (int(candidate.data(7) or 0), str(candidate.data(0) or "")),
+        )
+        self._apply_object_order(siblings)
+        self.apply_layer_z_values()
+        self._emit_layers_changed()
+        self._commit_history_step("object_layer_move")
+        return True
+
     def _find_layer_object_item(self, object_type: str, object_id: str) -> Any | None:
         for item in self.scene.items():
             if object_type == "camera" and isinstance(item, CameraItem) and item.camera.id == object_id:
@@ -624,6 +689,20 @@ class MapCanvasActions:
             if object_type == "drawing" and str(item.data(0) or "") == object_id:
                 return item
         return None
+
+    def _layer_object_id(self, item: Any) -> str:
+        if item.data(1) == "camera" and isinstance(item, CameraItem):
+            return item.camera.id
+        return str(item.data(0) or "")
+
+    def _apply_object_order(self, ordered_items: list[Any]) -> None:
+        for index, candidate in enumerate(ordered_items):
+            candidate.setData(7, index)
+            object_type_value = str(candidate.data(1) or "")
+            object_id_value = self._layer_object_id(candidate)
+            if object_type_value == "camera" and isinstance(candidate, CameraItem):
+                candidate.camera.z_index = index
+            self.object_z_changed.emit(object_type_value, object_id_value, index)
 
     def _selected_text_item(self) -> QGraphicsTextItem | None:
         selected_items = [item for item in self.scene.selectedItems() if item.data(1) == "drawing"]

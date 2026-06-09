@@ -16,12 +16,13 @@ Camera Map View is a PyQt6 desktop diagramming tool for camera and network-devic
 - A fixed floating Drawing Tools panel anchored near the canvas. It is visible but collapsed by default, opens to icon-only drawing controls, and includes Draw and Shapes menus plus live stroke/fill color swatches.
 - A right Layers panel with a compact two-column tree, user-managed layers, one-level layer groups, nested object rows, icon visibility, lock, rename, drag/drop, delete, and front/back ordering. It is hidden by default at startup.
 - A menu bar with File, Action, View, Language, and Settings. File can import/export `.cmvmap` packages and export a static snapshot image. The Action menu exposes Undo/Redo for the 10 most recent canvas-state changes in the active layout.
+- A theme system with neutral black/dark surfaces, light surfaces with dark text, and a blue primary color for selected/checked/focus UI states.
 
 The app can start with zero layouts. In that state the canvas and panels are blank, layout-dependent actions are disabled, and the user must create a layout or import a `.cmvmap` package before editing.
 
 ## Persistence Summary
 
-Local data is stored in SQLite at `assets/data/camera_manager.db`. The core tables are:
+Local data is stored in SQLite at `assets/data/camera_manager.db`. Runtime paths are app-relative through `utils.app_paths`, so packaged builds resolve assets from the bundled application base rather than the current shell directory. The core tables are:
 
 - `map_layouts`
 - `cameras`
@@ -30,9 +31,9 @@ Local data is stored in SQLite at `assets/data/camera_manager.db`. The core tabl
 - `drawing_shapes`
 - `ping_history`
 
-Each layout owns its devices, topology links, drawing/text/image annotations, layer stack, background map path, grid size, canvas dimensions, and background scale. Drawing and movement are freeform by default; holding `Ctrl` temporarily snaps the current draw/move/resize operation to the grid. Layouts can all be deleted, including legacy `default` layouts; when the last layout is deleted the app returns to the blank state.
+Each layout owns its devices, topology links, drawing/text/image annotations, layer stack, background map path, grid size, canvas dimensions, background scale, and background X/Y offset. Drawing and movement are freeform by default; holding `Ctrl` temporarily snaps the current draw/move/resize operation to the grid. Layouts can all be deleted, including legacy `default` layouts; when the last layout is deleted the app returns to the blank state.
 
-Undo/Redo is in-memory for the current session. It snapshots the active layout's canvas state, including cameras, drawings, device links, layers, background map path, canvas dimensions, grid size, and background scale. It does not persist history across app restarts.
+Undo/Redo is in-memory for the current session. It snapshots the active layout's canvas state, including cameras, drawings, device links, layers, background map path, canvas dimensions, grid size, background scale, and background X/Y offset. It does not persist history across app restarts.
 
 ## Device Summary
 
@@ -48,7 +49,7 @@ Supported device kinds are:
 - Firewall
 - PC
 
-Each kind has preset variants. Cameras additionally support location photos and FOV choices `80`, `180`, and `360`. Background maps, image annotations, and camera location photos use a shared import rule: images taller than `1440px` are scaled down to height `1440` while preserving aspect ratio; smaller images keep their original pixel size. Device links are directed from a lower/source device to an upstream/target device, for example `Camera -> AP -> Switch -> Router`.
+Each kind has preset variants. Devices can be created without an IP; ping is disabled automatically when IP is blank. Cameras additionally support location photos and FOV choices `80`, `180`, and `360`. Background maps, image annotations, and camera location photos use a shared import rule: images taller than `1440px` are scaled down to height `1440` while preserving aspect ratio; smaller images keep their original pixel size. Device links are directed from a lower/source device to an upstream/target device, for example `Camera -> AP -> Switch -> Router`.
 
 ## Internationalization Summary
 
@@ -73,7 +74,11 @@ Snapshot export writes the current scene as PNG/JPEG for reports. It renders the
 
 Device markers can be moved freely outside the canvas edit boundary so users can position markers near map edges without being blocked by oversized SVG or FOV bounds. Static snapshot export still renders only the canvas `sceneRect`, so any device portion outside that region is cropped from the report image.
 
+Background maps are independent from canvas size. Layout properties store background scale and X/Y offset, and the Drawing Tools panel includes a Move Background mode for visually repositioning the map without moving devices or annotations.
+
 The Control Panel topology tree supports quick linking by dragging one or more device rows onto an upstream device row. Dragging linked rows to blank space, or using the row context menu, ungroups them by removing their outgoing upstream link while keeping their downstream child links intact. Right-click unlink directly on canvas links is disabled; link removal is handled from the Control Panel or connection dialogs.
+
+Canvas topology highlighting distinguishes selected and related devices: selected/focused devices blink red/yellow, related upstream/downstream devices blink cyan/blue, downstream links stay cyan, and upstream links use amber.
 
 CSV device import is layout-scoped. Existing devices with the same ID in the current layout are updated in place while preserving placement, layer, visibility, lock, z-order, badge, image, rotation, and scale state. Rows with data but no ID are imported with generated IDs, and exported Parent IP is derived from `device_links` rather than stored as an editable field.
 

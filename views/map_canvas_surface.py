@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem
 
 from views.layer_state import BACKGROUND_LAYER, GRID_LAYER
 from views.ui_theme import CANVAS_BG_DARK, CANVAS_BG_LIGHT, GRID_DARK, GRID_LIGHT, PRIMARY
+from utils.app_paths import resolve_app_path
 
 
 class GridLayerItem(QGraphicsRectItem):
@@ -89,10 +90,11 @@ class MapCanvasSurface:
 
     def load_background_image(self, file_path: str, canvas_width: int | None = None, canvas_height: int | None = None) -> bool:
         """Load an image file as the map background."""
-        if not os.path.exists(file_path):
+        resolved_path = resolve_app_path(file_path)
+        if not os.path.exists(resolved_path):
             return False
         try:
-            pixmap = QPixmap(file_path)
+            pixmap = QPixmap(str(resolved_path))
             if pixmap.isNull():
                 return False
             self.remove_background_item()
