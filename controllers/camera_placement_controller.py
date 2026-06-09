@@ -396,14 +396,7 @@ class CameraPlacementController:
             return
         with self._capture_history("object_rename"):
             if object_type == "camera":
-                camera = self.camera_manager.get_camera_in_layout(object_id, self.current_layout_id)
-                if camera is None:
-                    return
-                camera.name = display_name
-                if self.camera_manager.update_camera_details(camera):
-                    self.map_canvas.refresh_camera_item(camera)
-                    self._refresh_camera_panel()
-                    self._refresh_dashboard()
+                self.camera_manager.update_camera_layer_display_name(object_id, display_name, self.current_layout_id)
             elif object_type == "drawing":
                 self.camera_manager.update_drawing_shape_display_name(object_id, display_name, self.current_layout_id)
 

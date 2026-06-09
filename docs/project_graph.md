@@ -80,6 +80,7 @@ Services
 +-- network_ping_service.py
 
 Utils
++-- app_paths.py
 +-- geometry.py
 +-- image_assets.py
 +-- validators.py
@@ -326,6 +327,7 @@ ping enabled and status False -> Offline
 ```text
 DrawingToolsPanel
 +-- pan_action -> MainWindow.set_canvas_mode(PAN)
++-- move_background_action -> MainWindow.set_canvas_mode(MOVE_BACKGROUND)
 +-- select_action -> MainWindow.set_canvas_mode(SELECT)
 +-- draw_line_action -> MainWindow.set_canvas_mode(LINE)
 +-- draw_freehand_action -> MainWindow.set_canvas_mode(FREEHAND)
@@ -354,6 +356,12 @@ PAN
 +-- clear scene selection
 +-- suspend item selectable/movable/focus flags
 +-- left drag pans canvas
+
+MOVE_BACKGROUND
++-- enabled only when a background map exists
++-- drag background item visually without moving devices/drawings
++-- persist background_x/background_y on release
++-- Esc rolls back active background drag
 
 SELECT
 +-- restore item interaction flags
@@ -399,11 +407,11 @@ mouse/middle/space pan
 ```text
 MapCanvas.refresh_device_links()
 +-- remove previous overlay items
-+-- selected_id = single selected/focused device id
-+-- related = downstream_links(selected_id) + upstream_path_links(selected_id)
++-- selected/focused device ids come from canvas selection or Control Panel focus
++-- related = downstream_links(device_id) + upstream_path_links(device_id)
 +-- create DeviceLinkItem(link_role="downstream") for lower subtree links
 +-- create DeviceLinkItem(link_role="upstream") for parent/root path links
-+-- no single selected/focused device -> no topology link overlays
++-- no selected/focused device -> no topology link overlays
 ```
 
 ```text
@@ -431,9 +439,19 @@ ControlLayoutPanel current device row
     +-- MapCanvas.highlight_device_topology(device_id, center=True)
         +-- selected device role = selected
         +-- upstream/downstream related devices role = related
-        +-- blink outline red/yellow from canvas timer
+        +-- selected device outline blinks red/yellow from canvas timer
+        +-- related device outlines blink cyan/blue from canvas timer
         +-- highlighted cameras use expanded FOV radius/alpha
         +-- siblings outside selected path/subtree remain unhighlighted
+```
+
+```text
+ControlLayoutPanel multi-select placed device rows
++-- CameraPlacementController.focus_cameras_from_panel(device_ids)
+    +-- MapCanvas.highlight_device_topologies(device_ids, center=False)
+        +-- selected device roles = selected
+        +-- union upstream/downstream related devices role = related
+        +-- upstream link role wins when the same link appears in multiple paths
 ```
 
 ## Canvas And Layer Graph
@@ -498,8 +516,8 @@ LayersPanel
 +-- object visibility icon -> MapCanvas.set_layer_object_visible() -> object_visibility_changed
 +-- object lock -> MapCanvas.set_layer_object_locked() -> object_locked_changed
 +-- object row rename -> MapCanvas.rename_layer_object() -> object_renamed
-+-- object drag/drop -> MapCanvas.move_layer_object_to_layer() -> object_layer_changed
-+-- object reorder drag/drop -> MapCanvas.move_layer_object_to_index() -> object_z_changed
++-- object drag/drop -> MapCanvas.move_layer_objects_to_layer() -> object_layer_changed
++-- object reorder drag/drop -> MapCanvas.move_layer_objects_to_index() -> object_z_changed
 +-- object row select -> MapCanvas.select_layer_object()
 ```
 
@@ -677,7 +695,7 @@ Import diagram
 +-- MainWindow.import_map_package_file()
     +-- services.map_package_service.import_map_package()
         +-- read manifest.json
-        +-- validate schema version 1/2/3
+        +-- validate schema version 1/2/3/4/5/6
         +-- create new layout
         +-- import/remap layers
         +-- extract assets to assets/maps/package_<layout_id>/
@@ -725,11 +743,12 @@ LayoutPropertiesDialog
 +-- canvas height
 +-- grid size
 +-- background scale
++-- background X/Y offset
 +-- CameraDataManager.update_layout()
 +-- MainWindow.apply_layout_to_canvas() when current
 ```
 
-When a layout has a background image, background scale drives the background pixmap and scene size. When a layout has no background image, canvas width/height and grid size drive the default grid scene.
+When a layout has a background image, background scale and background X/Y drive the pixmap size and position. Canvas width/height remain independent and the scene expands only if the offset background exceeds the configured canvas. When a layout has no background image, canvas width/height and grid size drive the default grid scene.
 
 ## Ping Status Flow
 

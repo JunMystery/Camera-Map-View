@@ -7,6 +7,8 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QImageReader
 
+from utils.app_paths import resolve_app_path
+
 IMAGE_MAX_HEIGHT = 1440
 CAMERA_PHOTO_MAX_EDGE = IMAGE_MAX_HEIGHT
 CAMERA_PHOTO_JPEG_QUALITY = 75
@@ -16,7 +18,7 @@ SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 def load_supported_image(source_path: str) -> QImage | None:
     """Load an image with Qt auto-transform handling."""
-    source = Path(source_path)
+    source = resolve_app_path(source_path)
     if not source.exists() or not source.is_file():
         return None
     reader = QImageReader(str(source))
@@ -38,11 +40,11 @@ def import_image_asset(
     prefix: str = "inserted",
 ) -> tuple[str, int, int] | None:
     """Copy or downscale a supported image into an asset directory."""
-    source = Path(source_path)
+    source = resolve_app_path(source_path)
     image = load_supported_image(source_path)
     if image is None:
         return None
-    target_root = Path(target_dir)
+    target_root = resolve_app_path(target_dir)
     target_root.mkdir(parents=True, exist_ok=True)
     source_suffix = source.suffix.lower()
     suffix = source_suffix if source_suffix in SUPPORTED_IMAGE_EXTENSIONS else ".png"
@@ -79,7 +81,7 @@ def _save_image(image: QImage, target: Path, suffix: str) -> bool:
 
 def is_supported_image(source_path: str) -> bool:
     """Return whether Qt can decode the selected image file."""
-    source = Path(source_path)
+    source = resolve_app_path(source_path)
     if not source.exists() or not source.is_file():
         return False
     reader = QImageReader(str(source))
@@ -97,7 +99,7 @@ def import_camera_location_image(
 
     image = resize_to_max_height(image, CAMERA_PHOTO_MAX_EDGE)
 
-    target_root = Path(target_dir)
+    target_root = resolve_app_path(target_dir)
     target_root.mkdir(parents=True, exist_ok=True)
     target = target_root / f"camera_photo_{uuid.uuid4().hex}.jpg"
     if not image.convertToFormat(QImage.Format.Format_RGB888).save(str(target), "JPG", CAMERA_PHOTO_JPEG_QUALITY):

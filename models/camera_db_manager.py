@@ -5,12 +5,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from utils.app_paths import resolve_app_path
+
 
 class CameraDbManager:
     """Manage a single SQLite connection and schema initialization."""
 
     def __init__(self, db_path: str | Path = "assets/data/camera_manager.db") -> None:
-        self.db_path = Path(db_path)
+        self.db_path = Path(":memory:") if str(db_path) == ":memory:" else resolve_app_path(db_path)
         if self.db_path != Path(":memory:"):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             self.backup_database()
@@ -73,6 +75,7 @@ class CameraDbManager:
                 z_index INTEGER DEFAULT 0,
                 object_visible INTEGER DEFAULT 1,
                 badge_text TEXT DEFAULT '',
+                layer_display_name TEXT DEFAULT '',
                 is_placed INTEGER DEFAULT 0,
                 FOREIGN KEY (layout_id) REFERENCES map_layouts(id) ON DELETE CASCADE
             );
@@ -158,6 +161,7 @@ class CameraDbManager:
                 "z_index": "INTEGER DEFAULT 0",
                 "object_visible": "INTEGER DEFAULT 1",
                 "badge_text": "TEXT DEFAULT ''",
+                "layer_display_name": "TEXT DEFAULT ''",
             },
         )
         self._add_missing_columns(

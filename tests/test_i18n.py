@@ -30,7 +30,7 @@ from models.map_layout_model import MapLayout
 from views.layout_properties_dialog import LayoutPropertiesDialog
 from views.map_drawing_tools import DrawingMode
 from views.settings_dialog import SettingsDialog
-from views.ui_theme import DANGER, LIGHT_ACTIVE_ROW, LIGHT_TEXT, app_stylesheet
+from views.ui_theme import DANGER, LIGHT_ACTIVE_ROW, LIGHT_TEXT, PRIMARY, PRIMARY_FOCUS, PRIMARY_SOFT, app_stylesheet
 
 
 def _write_string_xml(
@@ -387,6 +387,14 @@ def test_settings_theme_dropdown_applies_immediately() -> None:
     assert "padding: 6px 76px 6px 16px;" in app_stylesheet(True)
     assert LIGHT_TEXT in app_stylesheet(True)
     app.processEvents()
+
+
+def test_primary_theme_tokens_are_blue() -> None:
+    assert PRIMARY == "#2563eb"
+    assert PRIMARY_SOFT == "#3b82f6"
+    assert PRIMARY_FOCUS == "#93c5fd"
+    assert LIGHT_ACTIVE_ROW == "#dbeafe"
+    assert "border-color: #3b82f6" in app_stylesheet(True)
 
 
 def test_layout_properties_dialog_returns_layout_canvas_values() -> None:

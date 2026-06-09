@@ -202,6 +202,27 @@ def test_missing_background_image_keeps_existing_scene() -> None:
     app.processEvents()
 
 
+def test_background_load_resolves_relative_path_from_app_root(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    image_path = app_root / "assets" / "maps" / "map.png"
+    image_path.parent.mkdir(parents=True)
+    image = QImage(120, 80, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFFFFFF)
+    assert image.save(str(image_path))
+    other_cwd = tmp_path / "other"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+    monkeypatch.setattr("views.map_canvas_surface.resolve_app_path", lambda path: app_root / path)
+    canvas = MapCanvas()
+
+    assert canvas.load_background_image("assets/maps/map.png")
+
+    assert canvas.background_item is not None
+    app.processEvents()
+
+
 def test_background_load_and_unload_preserve_map_items(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     canvas = MapCanvas()
@@ -463,6 +484,37 @@ def test_camera_fov_fill_alpha_and_color_are_red() -> None:
         assert color.red() > color.green()
         assert color.red() > color.blue()
         assert color.green() == color.blue()
+
+
+def test_camera_topology_outline_colors_distinguish_primary_and_related() -> None:
+    item = CameraItem(Camera("cam_test", "Lobby", "10.0.0.10"))
+
+    default_outline = item._outline_color(False)
+    selected_default_outline = item._outline_color(True)
+    item.set_topology_highlight("selected", False)
+    primary_red = item._outline_color(False)
+    primary_width = item._outline_width(False)
+    primary_metadata = item._metadata_color(False)
+    item.set_topology_highlight("selected", True)
+    primary_yellow = item._outline_color(False)
+    item.set_topology_highlight("related", False)
+    related_cyan = item._outline_color(False)
+    related_width = item._outline_width(False)
+    related_metadata = item._metadata_color(False)
+    item.set_topology_highlight("related", True)
+    related_blue = item._outline_color(False)
+
+    assert default_outline.name() == "#ef4444"
+    assert selected_default_outline.name() == "#facc15"
+    assert primary_red.name() == "#ef4444"
+    assert primary_yellow.name() == "#facc15"
+    assert primary_width > related_width
+    assert related_cyan.name() == "#38bdf8"
+    assert related_blue.name() == "#0ea5e9"
+    assert related_cyan.name() != primary_red.name()
+    assert related_blue.name() != primary_yellow.name()
+    assert primary_metadata.name() == primary_red.name()
+    assert related_metadata.name() == related_cyan.name()
 
 
 def test_camera_fov_is_not_in_hit_shape_and_non_camera_resize_only() -> None:
@@ -1294,6 +1346,106 @@ def test_layers_tree_drop_moves_to_layer_and_ignores_invalid_targets(monkeypatch
 
     assert ignored.ignored
     assert canvas._find_layer_object_item("drawing", "obj_a").data(2) == target_layer.id
+    app.processEvents()
+
+
+def test_layers_tree_drop_moves_multiple_objects_to_layer(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    source_layer = canvas.canvas_layers[0]
+    target_layer = CanvasLayer("layer_default_2", "default", "Layer 2", 1)
+    canvas.set_canvas_layers([source_layer, target_layer], "default")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], layer_id=source_layer.id))
+    canvas.add_drawing_shape(DrawingShape("obj_b", "Line", [0.0, 10.0, 10.0, 20.0], layer_id=source_layer.id))
+    canvas.add_drawing_shape(DrawingShape("obj_c", "Line", [0.0, 20.0, 10.0, 30.0], layer_id=source_layer.id))
+    panel.refresh()
+    item_a = panel._find_object_tree_item("drawing", "obj_a")
+    item_b = panel._find_object_tree_item("drawing", "obj_b")
+    item_c = panel._find_object_tree_item("drawing", "obj_c")
+    assert item_a is not None and item_b is not None and item_c is not None
+    panel.tree.setCurrentItem(item_a)
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    target = next(item for item in _layer_tree_items(panel) if item.data(0, ROLE_LAYER_ID) == target_layer.id)
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: target)
+
+    event = _LayerDropEvent()
+    panel.tree.dropEvent(event)
+
+    assert event.accepted
+    assert canvas._find_layer_object_item("drawing", "obj_a").data(2) == target_layer.id
+    assert canvas._find_layer_object_item("drawing", "obj_b").data(2) == target_layer.id
+    assert canvas._find_layer_object_item("drawing", "obj_c").data(2) == source_layer.id
+    selected_ids = {item.data(0, ROLE_ID) for item in panel.tree.selectedItems() if item.data(0, ROLE_TYPE) == "object"}
+    assert selected_ids == {"obj_a", "obj_b"}
+    app.processEvents()
+
+
+def test_layers_tree_drop_reorders_multiple_objects(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    canvas.add_drawing_shape(DrawingShape("obj_a", "Line", [0.0, 0.0, 10.0, 10.0], z_index=0))
+    canvas.add_drawing_shape(DrawingShape("obj_b", "Line", [0.0, 10.0, 10.0, 20.0], z_index=1))
+    canvas.add_drawing_shape(DrawingShape("obj_c", "Line", [0.0, 20.0, 10.0, 30.0], z_index=2))
+    canvas.add_drawing_shape(DrawingShape("obj_d", "Line", [0.0, 30.0, 10.0, 40.0], z_index=3))
+    panel.refresh()
+    item_a = panel._find_object_tree_item("drawing", "obj_a")
+    item_b = panel._find_object_tree_item("drawing", "obj_b")
+    item_d = panel._find_object_tree_item("drawing", "obj_d")
+    assert item_a is not None and item_b is not None and item_d is not None
+    panel.tree.setCurrentItem(item_a)
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    monkeypatch.setattr(panel.tree, "itemAt", lambda _point: item_d)
+    monkeypatch.setattr(
+        panel.tree,
+        "dropIndicatorPosition",
+        lambda: QAbstractItemView.DropIndicatorPosition.AboveItem,
+    )
+
+    event = _LayerDropEvent()
+    panel.tree.dropEvent(event)
+
+    assert event.accepted
+    z_values = {
+        object_id: int(canvas._find_layer_object_item("drawing", object_id).data(7) or 0)
+        for object_id in ("obj_a", "obj_b", "obj_c", "obj_d")
+    }
+    assert z_values == {"obj_c": 0, "obj_a": 1, "obj_b": 2, "obj_d": 3}
+    app.processEvents()
+
+
+def test_layers_panel_toggle_and_rename_preserve_scroll(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    canvas = MapCanvas()
+    manager = CameraDataManager(":memory:")
+    panel = LayersPanel(canvas, manager, lambda: "default")
+    for index in range(20):
+        canvas.add_drawing_shape(
+            DrawingShape(f"obj_{index}", "Line", [0.0, float(index), 10.0, float(index + 1)], z_index=index)
+        )
+    panel.refresh()
+    scroll_bar = _ScrollBar()
+    monkeypatch.setattr(panel.tree, "verticalScrollBar", lambda: scroll_bar)
+    scroll_bar.setValue(42)
+    item = panel._find_object_tree_item("drawing", "obj_10")
+    assert item is not None
+
+    panel._set_object_visible("drawing", "obj_10", False)
+    app.processEvents()
+
+    assert scroll_bar.value() == 42
+    item = panel._find_object_tree_item("drawing", "obj_10")
+    assert item is not None
+    item.setText(1, "Layer Alias")
+    panel._handle_item_changed(item, 1)
+    app.processEvents()
+
+    assert scroll_bar.value() == 42
     app.processEvents()
 
 

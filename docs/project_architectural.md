@@ -10,7 +10,7 @@ The project follows an MVC-style structure:
 - `views/`: Qt widgets, dialogs, canvas behavior, dock panels, drawing tools, icons, themes, and scene items.
 - `controllers/`: application coordination and persistence-facing business logic.
 - `services/`: app settings, network monitoring, active ping launcher, CSV import/export, and portable package import/export.
-- `utils/`: geometry, validation, and image asset helpers.
+- `utils/`: app-relative path resolution, geometry, validation, and image asset helpers.
 - `config/`: runtime i18n loader plus XML UI/UX string resources.
 - `assets/`: local data, button SVGs, device SVGs, map assets, and imported camera photos.
 - `scripts/`: utility scripts such as the demo layout seed.
@@ -27,10 +27,10 @@ Current UI composition:
 - **Control Panel:** fixed left dock with layout selection/CRUD, device inventory/CSV actions, link-tree grouping, status filter, placed/unplaced toggle, and a close button inside the panel header.
 - **MapCanvas:** central `QGraphicsView` for background map, theme-aware canvas edit boundary, optional grid, mouse-wheel zoom, pan, rubber-band multi-select in Select mode, device items, camera FOV, topology-link overlays, drawing annotations, and drag/drop placement.
 - **Drawing Tools:** fixed floating child widget anchored near the canvas. It is visible but collapsed by default, has Draw and Shapes menus, live stroke/fill color swatches, can collapse to one button, and cannot be dragged into a separate window.
-- **Layers Panel:** docked two-column user layer stack with one-level layer groups, nested object rows, icon visibility, object locks, drag/drop layer reassignment, and front/back ordering. It is hidden by default at startup.
+- **Layers Panel:** docked two-column user layer stack with one-level layer groups, nested object rows, icon visibility, object locks, multi-object drag/drop layer reassignment, and front/back ordering. It is hidden by default at startup.
 - **Status Dashboard:** total devices plus monitored online/offline counts.
 - **Settings Dialog:** application-level Network and Appearance tabs only.
-- **Layout Properties Dialog:** layout name, canvas width/height, grid size, and background scale.
+- **Layout Properties Dialog:** layout name, canvas width/height, grid size, background scale, and background X/Y offset.
 
 Dock title bars are hidden with empty title-bar widgets. Panel titles and close buttons live inside the panel headers, while `QDockWidget.windowTitle()` remains available for View menu toggle actions.
 
@@ -44,6 +44,8 @@ SQLite is managed by `models.camera_db_manager.CameraDbManager`. The default dat
 assets/data/camera_manager.db
 ```
 
+Relative runtime paths are resolved through `utils.app_paths.resolve_app_path()`, so source runs resolve them from the repository/application root and frozen PyInstaller runs resolve them from the bundled application base.
+
 When an existing database is opened, a startup backup is created at:
 
 ```text
@@ -52,8 +54,8 @@ assets/data/camera_manager.db.bak
 
 Core tables:
 
-- `map_layouts`: independent workspaces with name, background path, grid size, canvas size, and background scale.
-- `cameras`: layout-scoped device records. Fields include device kind, variant, optional IP, ping preference, placement, rotation/display scale, camera FOV, status, zone, layer membership, location photo path, object lock, object z-index, and placed/unplaced state. `dvr_origin` is a legacy compatibility field; current UI derives Parent IP from `device_links`.
+- `map_layouts`: independent workspaces with name, background path, grid size, canvas size, background scale, and background X/Y offset.
+- `cameras`: layout-scoped device records. Fields include device kind, variant, optional IP, ping preference, placement, rotation/display scale, camera FOV, status, zone, layer membership, location photo path, badge text, layer-only display alias, object lock, object visibility, object z-index, and placed/unplaced state. `dvr_origin` is a legacy compatibility field; current UI derives Parent IP from `device_links`.
 - `device_links`: layout-scoped directed upstream topology links, for example `Camera -> AP -> Switch -> Router`.
 - `canvas_layers`: user-managed layer stack per layout, including name, position, visibility, and lock state.
 - `drawing_shapes`: layout-scoped annotations, including geometry, stroke color, fill color, text labels, image asset paths, layer membership, display name, object lock, object visibility, and object z-index.
@@ -73,7 +75,7 @@ Each layout is an independent workspace:
 - Devices and drawings are scoped by `layout_id`.
 - Device links are scoped by `layout_id`.
 - Layer stacks are scoped by `layout_id`.
-- Canvas size, grid size, background path, and background scale are persisted per layout.
+- Canvas size, grid size, background path, background scale, and background X/Y offset are persisted per layout.
 - Switching layouts clears visible canvas items and reloads only the selected layout.
 - Creating a layout opens `LayoutPropertiesDialog` so the user provides name and canvas settings up front.
 - Editing a layout uses the same dialog and applies canvas settings immediately when the edited layout is active.
@@ -94,7 +96,7 @@ Device records can be created, edited, deleted, imported from CSV, and exported 
 
 Device properties support:
 
-- Generic device name, kind, variant, optional IP, RTSP port, zone, status, ping preference, and notes. Parent IP is not edited manually; it is derived from direct upstream device links.
+- Generic device name, kind, variant, optional IP, RTSP port, zone, ping preference, badge text, and notes. Parent IP is not edited manually; it is derived from direct upstream device links. Online status is not manually edited in the dialog; it is derived from ping state and remains Unknown when ping is disabled or IP is blank.
 - Camera-only FOV choices `80`, `180`, and `360`.
 - Camera location image upload/removal. Images are imported into `assets/camera_photos/` as JPG with max height `1440px` and quality `75`.
 - Optional device badge text, capped at 3 characters, rendered at the top-right of the device marker.
@@ -114,7 +116,7 @@ The Control Panel device list:
 - Uses SVG device icons and supports dragging device rows onto the canvas.
 - Selecting a placed device row switches the canvas to Select mode, centers that device, clears LayersPanel selection, and highlights the selected device's upstream path plus downstream subtree on canvas.
 
-Dropping a device onto `MapCanvas` marks it placed, stores its position, assigns it to the active canvas layer, and adds a scene item. Placed devices can show configurable labels for name, zone, IP, and derived Parent IP.
+Dropping a device onto `MapCanvas` marks it placed, stores its position, assigns it to the active canvas layer, and adds a scene item. Placed devices can show configurable canvas labels for name, zone, and IP. Derived Parent IP remains available in tooltips, search, dialogs, and CSV export, but is not drawn as a canvas info line.
 
 In `Select` mode, device and drawing items can be selected individually or with rubber-band drag selection. Device items can be moved, edited, deleted from storage, unplaced from the canvas, or resized from the selected resize handle. The resize handle is drawn near the device body with a larger hit area than its visual square so it is easier to grab and stays separated from the camera rotation handle. Device movement is not clamped to the canvas boundary; users can move markers outside the edit area near map edges, and snapshot export crops anything outside the scene rectangle. All device kinds can resize through `display_scale`; only cameras expose a rotation handle. Camera items additionally support location image viewing and FOV rendering.
 
@@ -135,15 +137,16 @@ This means selecting an endpoint camera shows its path upward, selecting an AP o
 
 Right-click unlink directly on canvas links is disabled. Link removal is intentionally handled from Control Panel Ungroup/blank-drop actions or connection dialogs. Link items still use a wide hit-test shape internally so hover/selection behavior is forgiving while the visible dashed line stays thin.
 
-When a placed device is focused from the Control Panel, the canvas applies transient topology highlight state. The selected device and related upstream/downstream devices blink between red and yellow outlines, siblings outside the selected path/subtree are not highlighted, and highlighted cameras use the expanded FOV radius/alpha.
+When a placed device is focused from the Control Panel, the canvas applies transient topology highlight state. The selected/focused device blinks between red and yellow outlines, related upstream/downstream devices blink between cyan and blue outlines, siblings outside the selected path/subtree are not highlighted, and highlighted cameras use the expanded FOV radius/alpha.
 
 ## Camera Location Images And Active Ping
 
-Camera context menu actions are ordered:
+Placed device context menu actions are ordered:
 
 1. Location image
 2. Ping
 3. Properties
+4. Remove from canvas
 
 Location image opens a modal viewer when a photo exists. The viewer supports:
 
@@ -166,6 +169,7 @@ Active ping is user-managed and does not write to `ping_history`.
 Available canvas modes are defined by `views.map_drawing_tools.DrawingMode`:
 
 - `PAN`
+- `MOVE_BACKGROUND`
 - `SELECT`
 - `LINE`
 - `RECTANGLE`
@@ -176,7 +180,7 @@ Available canvas modes are defined by `views.map_drawing_tools.DrawingMode`:
 - `FREEHAND`
 - `LINK`
 
-The app opens in `PAN` mode by default. `PAN` uses `ScrollHandDrag`, clears selection, and disables item selectable/movable/focus flags until another mode is selected. At startup the Drawing Tools panel is collapsed rather than hidden, so the user can reopen it with one visible button.
+The app opens in `PAN` mode by default. `PAN` uses `ScrollHandDrag`, clears selection, and disables item selectable/movable/focus flags until another mode is selected. `MOVE_BACKGROUND` is a dedicated visual mode for dragging the background map without moving devices or annotations. At startup the Drawing Tools panel is collapsed rather than hidden, so the user can reopen it with one visible button.
 
 Canvas interaction:
 
@@ -184,13 +188,14 @@ Canvas interaction:
 - Middle-drag pans the canvas.
 - Left-drag pans in `PAN`.
 - Space temporarily enables hand-drag panning.
-- `Esc` cancels in-progress drawing, panning, link source selection, and camera handle interactions.
+- `Esc` cancels in-progress drawing, panning, link source selection, camera handle interactions, and active background-map drag.
 - Drawing and movement are freeform by default; holding `Ctrl` temporarily snaps the current draw, move, or resize operation to the active grid size.
 - The canvas edit boundary is separate from grid lines, so turning the grid off hides only grid lines while keeping the editable scene area visible in both themes.
 
 The Drawing Tools panel contains icon-only actions for:
 
 - Pan
+- Move background
 - Select
 - Draw group: line, freehand
 - Shapes group: rectangle, rounded rectangle, ellipse/circle, triangle, polygon/zone
@@ -202,13 +207,13 @@ The Drawing Tools panel contains icon-only actions for:
 - Link device
 - Background map visibility
 - Grid visibility
-- Camera/device info visibility: name, zone, IP, Parent IP
+- Camera/device info visibility: name, zone, IP
 
 Text annotations use `DrawingShape.line_thickness` as font size. Legacy text with `line_thickness <= 2` renders at the default size `18`. In Select mode, text, image, and shape annotations expose resize and rotation handles. Text rotation is stored in `DrawingShape.points` as `[x, y, rotation]`; image size and rotation are stored as `[x, y, width, height, rotation]`; rectangle-style shapes can store `[x1, y1, x2, y2, rotation]`. Legacy records without rotation still render with rotation `0`.
 
 Closed shapes support optional `DrawingShape.fill_color`. An empty fill color means no fill for legacy and new transparent shapes. Rectangle, rounded rectangle, ellipse, triangle, and zone/polygon consume fill color; line, freehand, text, and image ignore it.
 
-Background maps and inserted image annotations are imported through `utils.image_assets`. Supported image formats include PNG, JPG/JPEG, BMP, WEBP, and any format Qt can decode from the file dialog. Images taller than `1440px` are scaled down to height `1440` while preserving aspect ratio; images at or below `1440px` height keep their original pixel size. Inserted image annotations keep their original display size when they fit inside the current canvas and scale down only when needed to fit the scene.
+Background maps and inserted image annotations are imported through `utils.image_assets`. Supported image formats include PNG, JPG/JPEG, BMP, WEBP, and any format Qt can decode from the file dialog. Images taller than `1440px` are scaled down to height `1440` while preserving aspect ratio; images at or below `1440px` height keep their original pixel size. Inserted image annotations keep their original display size when they fit inside the current canvas and scale down only when needed to fit the scene. Background maps do not lock canvas size; the scene uses layout canvas dimensions plus any space needed for the scaled/offset background.
 
 Line, freehand, rectangle, rounded rectangle, ellipse, triangle, and zone items use stroke-only hit tests. Filled/bounding areas do not block selection of devices, text, or images inside them; users select these drawings by clicking the visible stroke/border.
 
@@ -220,8 +225,8 @@ Layers behave like a simplified Photoshop layer stack:
 - A layout with no user layers gets one base layer named `Layer 1`.
 - New devices, drawings, text annotations, and image annotations are assigned to the currently active layer.
 - Layer rows support expand/collapse, visibility, lock, rename, delete, and up/down reordering.
-- Object rows support rename, per-object visibility, lock, delete, drag/drop to another layer, selection on canvas, and up/down front/back movement within their layer.
-- Camera object rename changes the real `Camera.name`.
+- Object rows support rename, per-object visibility, lock, delete, multi-select drag/drop to another layer, selection on canvas, and up/down front/back movement within their layer.
+- Camera object rename changes `Camera.layer_display_name` only for LayersPanel display; it does not change the real `Camera.name`, Control Panel label, CSV name, or canvas name label.
 - Drawing/image/text object rename persists `DrawingShape.display_name` without changing visible text content on the canvas.
 - Object lock disables selection/movement for that object and persists through reload.
 - Object z-index persists through reload and package export/import.
@@ -244,7 +249,7 @@ UI-only state such as current selection, zoom/pan position, panel visibility, fi
 - `manifest.json`
 - `assets/` files for the background map, image annotations, and camera location photos when those source files exist
 
-The current package schema version is `3`. The manifest includes:
+The current package schema version is `6`. The manifest includes:
 
 - Schema version
 - Layout metadata
@@ -255,6 +260,7 @@ The current package schema version is `3`. The manifest includes:
 - Canvas layers
 - Drawing shapes
 - Asset references, including `camera_photos`
+- Background map offset and scale through layout metadata
 
 Import creates a new layout instead of overwriting the current layout. Layer IDs and object IDs are remapped where needed, and extracted assets are placed under:
 
@@ -305,7 +311,7 @@ Runtime network settings are edited through Settings. Status updates are persist
 
 ## Themes, Icons, And Reusable UI Assets
 
-Theme colors and stylesheets live in `views.ui_theme`.
+Theme colors and stylesheets live in `views.ui_theme`. The shared primary UI color is blue and drives checked buttons, selected/focus borders, menu indicators, checkbox checked states, light-theme active rows, and generated icon accents.
 
 Button icons and device icons are loaded from SVG files when present:
 
@@ -324,7 +330,7 @@ Theme-aware UI surfaces include:
 - Device properties and connection dialogs.
 - Camera/device item rendering.
 
-The dark theme uses black and neutral dark surfaces instead of blue-black. The light theme uses light backgrounds with dark text and recolored icons.
+The dark theme uses black and neutral dark surfaces instead of blue-black. The light theme uses light backgrounds with dark text, blue selected states, and recolored icons.
 
 ## Internationalization
 

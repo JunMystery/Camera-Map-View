@@ -348,6 +348,21 @@ def test_database_manager_creates_startup_backup(tmp_path) -> None:
     assert db_path.with_suffix(".db.bak").exists()
 
 
+def test_database_default_path_is_app_relative(monkeypatch, tmp_path) -> None:
+    app_root = tmp_path / "app"
+    other_cwd = tmp_path / "other"
+    app_root.mkdir()
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+    monkeypatch.setattr("models.camera_db_manager.resolve_app_path", lambda path: app_root / path)
+
+    manager = CameraDbManager()
+    manager.close()
+
+    assert (app_root / "assets/data/camera_manager.db").exists()
+    assert not (other_cwd / "assets/data/camera_manager.db").exists()
+
+
 def test_camera_csv_import_and_export(tmp_path) -> None:
     manager = CameraDataManager(":memory:")
     _create_default_layout(manager)

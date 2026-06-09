@@ -35,9 +35,10 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                     id, layout_id, name, ip_address, port, camera_type,
                     pos_x, pos_y, rotation, display_scale, status, last_check, notes,
                     zone, dvr_origin, layer_id, location_image_path, device_kind,
-                    variant, ping_enabled, fov_degrees, object_locked, z_index, object_visible, badge_text, is_placed
+                    variant, ping_enabled, fov_degrees, object_locked, z_index,
+                    object_visible, badge_text, layer_display_name, is_placed
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._camera_to_row_params(camera, layout_id, is_placed),
             )
@@ -104,7 +105,8 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                     object_locked = ?,
                     z_index = ?,
                     object_visible = ?,
-                    badge_text = ?
+                    badge_text = ?,
+                    layer_display_name = ?
                 WHERE id = ?
                 """,
                 (
@@ -129,6 +131,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                     int(camera.z_index),
                     int(camera.object_visible),
                     camera.badge_text[:3].upper(),
+                    camera.layer_display_name,
                     camera.id,
                 ),
             )
@@ -420,6 +423,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
             int(camera.z_index),
             int(camera.object_visible),
             camera.badge_text[:3].upper(),
+            camera.layer_display_name,
             int(is_placed),
         )
 
@@ -464,6 +468,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
             z_index=existing.z_index,
             object_visible=existing.object_visible,
             badge_text=existing.badge_text,
+            layer_display_name=existing.layer_display_name,
         )
 
     def _row_to_camera(self, row: sqlite3.Row) -> Camera:
@@ -493,6 +498,7 @@ class CameraDataManager(CameraLayoutOperations, CameraLayerOperations, DeviceLin
                 "z_index": int(row["z_index"] or 0),
                 "object_visible": bool(row["object_visible"]),
                 "badge_text": row["badge_text"] or "",
+                "layer_display_name": row["layer_display_name"] or "",
             }
         )
 

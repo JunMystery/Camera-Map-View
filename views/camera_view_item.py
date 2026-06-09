@@ -448,12 +448,8 @@ class CameraItem(QGraphicsItem):
             notify_geometry()
 
     def _paint_device_body(self, painter: QPainter, is_selected: bool) -> None:
-        if self.topology_highlight_role:
-            outline_color = QColor(WARNING if self.topology_blink_phase else DANGER)
-            outline_width = 3.2 if self.topology_highlight_role == "selected" else 2.6
-        else:
-            outline_color = QColor(WARNING if is_selected else DANGER)
-            outline_width = 2.4 if is_selected else 1.8
+        outline_color = self._outline_color(is_selected)
+        outline_width = self._outline_width(is_selected)
         painter.setPen(QPen(outline_color, outline_width))
         painter.setBrush(QBrush(QColor("#f8fafc" if self.light_theme else "#1e293b")))
         painter.drawRoundedRect(QRectF(-20, -18, 40, 36), 5, 5)
@@ -488,8 +484,22 @@ class CameraItem(QGraphicsItem):
         if self.topology_highlight_role == "selected" or is_selected:
             return QColor(WARNING if self.topology_blink_phase else DANGER)
         if self.topology_highlight_role == "related":
-            return QColor(LIGHT_TEXT if self.light_theme else TEXT_ON_DARK)
+            return QColor("#0ea5e9" if self.topology_blink_phase else "#38bdf8")
         return QColor(TEXT_MUTED)
+
+    def _outline_color(self, is_selected: bool) -> QColor:
+        if self.topology_highlight_role == "selected":
+            return QColor(WARNING if self.topology_blink_phase else DANGER)
+        if self.topology_highlight_role == "related":
+            return QColor("#0ea5e9" if self.topology_blink_phase else "#38bdf8")
+        return QColor(WARNING if is_selected else DANGER)
+
+    def _outline_width(self, is_selected: bool) -> float:
+        if self.topology_highlight_role == "selected":
+            return 3.2
+        if self.topology_highlight_role == "related":
+            return 2.6
+        return 2.4 if is_selected else 1.8
 
     def _fov_fill_color(self, is_selected: bool) -> QColor:
         """Return a red FOV fill that stays visibly red over floor plans."""

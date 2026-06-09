@@ -212,6 +212,23 @@ class CameraLayerOperations:
             )
         return cursor.rowcount > 0
 
+    def update_camera_layer_display_name(
+        self,
+        camera_id: str,
+        display_name: str,
+        layout_id: str | None = None,
+    ) -> bool:
+        """Persist a Layers-panel-only display alias for one camera object."""
+        value = display_name.strip()
+        if layout_id is None:
+            cursor = self.db.execute("UPDATE cameras SET layer_display_name = ? WHERE id = ?", (value, camera_id))
+        else:
+            cursor = self.db.execute(
+                "UPDATE cameras SET layer_display_name = ? WHERE id = ? AND layout_id = ?",
+                (value, camera_id, layout_id),
+            )
+        return cursor.rowcount > 0
+
     def update_drawing_shape_object_visible(self, shape_id: str, visible: bool, layout_id: str | None = None) -> bool:
         """Persist a drawing object visibility flag."""
         if layout_id is None:

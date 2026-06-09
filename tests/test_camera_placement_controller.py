@@ -379,9 +379,12 @@ def test_canvas_renames_camera_object_and_refreshes_panel() -> None:
 
     saved = manager.get_camera("cam_01")
     assert saved is not None
-    assert saved.name == "Renamed Camera"
-    assert canvas.camera_items["cam_01"].camera.name == "Renamed Camera"
-    assert any("Renamed Camera" in item.text(0) for item in _tree_items(panel))
+    assert saved.name != "Renamed Camera"
+    assert saved.layer_display_name == "Renamed Camera"
+    assert canvas.camera_items["cam_01"].camera.name != "Renamed Camera"
+    assert canvas.camera_items["cam_01"].camera.layer_display_name == "Renamed Camera"
+    assert any(state.label == "Renamed Camera" for state in canvas.get_layer_object_states(canvas.active_layer_id))
+    assert all("Renamed Camera" not in item.text(0) for item in _tree_items(panel))
     app.processEvents()
 
 
