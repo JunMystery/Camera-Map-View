@@ -844,6 +844,42 @@ def test_camera_tree_link_unlink_preserves_only_existing_expanded_groups(monkeyp
     app.processEvents()
 
 
+def test_camera_tree_parent_change_flow(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = CameraPanel()
+    cam_a = Camera("cam_a", "Camera A", "10.0.0.10")
+    switch_a = Camera("switch_a", "Switch A", "", device_kind=DEVICE_KIND_SWITCH, variant="Core", ping_enabled=False)
+    switch_b = Camera("switch_b", "Switch B", "", device_kind=DEVICE_KIND_SWITCH, variant="Access", ping_enabled=False)
+    devices = [cam_a, switch_a, switch_b]
+    placed_ids = {device.id for device in devices}
+    links = [
+        DeviceLink("link_1", "default", "cam_a", "switch_a"),
+    ]
+    panel.set_cameras(devices, placed_ids, links)
+
+    parent_changes = []
+
+    def handle_parent_change(source: str, target: str) -> bool:
+        parent_changes.append((source, target))
+        links[:] = [link for link in links if link.source_device_id != source]
+        links.append(DeviceLink("link_new", "default", source, target))
+        panel.set_cameras(devices, placed_ids, links)
+        return True
+
+    panel.set_device_parent_change_request_handler(handle_parent_change)
+    monkeypatch.setattr(panel.tree_widget, "itemAt", lambda _point: _camera_item(panel, "switch_b"))
+
+    event = _DropEvent(panel.tree_widget._drag_mime_data(_camera_item(panel, "cam_a")))
+    panel.tree_widget.dropEvent(event)
+
+    assert event.accepted is True
+    assert parent_changes == [("cam_a", "switch_b")]
+    assert len(links) == 1
+    assert links[0].source_device_id == "cam_a"
+    assert links[0].target_device_id == "switch_b"
+    app.processEvents()
+
+
 class _ScrollBar:
     def __init__(self) -> None:
         self._value = 50

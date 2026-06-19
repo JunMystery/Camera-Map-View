@@ -36,6 +36,7 @@ class CameraTreeWidget(QTreeWidget):
 
     device_link_requested = pyqtSignal(str, str)
     device_unlink_requested = pyqtSignal(object)
+    device_parent_change_requested = pyqtSignal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -44,6 +45,7 @@ class CameraTreeWidget(QTreeWidget):
         self._downstream_ids: dict[str, set[str]] = {}
         self._device_link_request_handler: Callable[[str, str], bool] | None = None
         self._device_unlink_request_handler: Callable[[list[str]], bool] | None = None
+        self._device_parent_change_request_handler: Callable[[str, str], bool] | None = None
         self._drag_in_progress = False
         self.installEventFilter(self)
         self.viewport().installEventFilter(self)
@@ -76,6 +78,10 @@ class CameraTreeWidget(QTreeWidget):
     def set_device_unlink_request_handler(self, handler: Callable[[list[str]], bool] | None) -> None:
         """Set the callback that ungroups selected devices from their parent links."""
         self._device_unlink_request_handler = handler
+
+    def set_device_parent_change_request_handler(self, handler: Callable[[str, str], bool] | None) -> None:
+        """Set the callback that moves selected devices to a new parent."""
+        self._device_parent_change_request_handler = handler
 
     def startDrag(self, supported_actions: Qt.DropAction) -> None:
         item = self.currentItem()
@@ -144,7 +150,7 @@ class CameraTreeWidget(QTreeWidget):
         source_ids, target_id = ids
         created_any = False
         for source_id in source_ids:
-            created_any = self._request_device_link(source_id, target_id) or created_any
+            created_any = self._request_device_parent_change(source_id, target_id) or created_any
         if not created_any:
             event.ignore()
             return
@@ -259,6 +265,14 @@ class CameraTreeWidget(QTreeWidget):
         if self._device_unlink_request_handler is not None:
             return bool(self._device_unlink_request_handler(source_ids))
         self.device_unlink_requested.emit(source_ids)
+        return True
+
+    def _request_device_parent_change(self, source_id: str, target_id: str) -> bool:
+        if self._device_parent_change_request_handler is not None:
+            return bool(self._device_parent_change_request_handler(source_id, target_id))
+        if self._device_link_request_handler is not None:
+            return bool(self._device_link_request_handler(source_id, target_id))
+        self.device_parent_change_requested.emit(source_id, target_id)
         return True
 
     def _accept_copy_drop(self, event) -> None:
@@ -489,6 +503,7 @@ class ControlLayoutPanel(QWidget):
         self._icon_color = TEXT_ON_DARK
         self._device_link_request_handler: Callable[[str, str], bool] | None = None
         self._device_unlink_request_handler: Callable[[list[str]], bool] | None = None
+        self._device_parent_change_request_handler: Callable[[str, str], bool] | None = None
         self._last_search_query = ""
         self._pre_search_expanded_groups: set[str] = set()
         self._build_ui()
@@ -524,6 +539,10 @@ class ControlLayoutPanel(QWidget):
     def set_device_unlink_request_handler(self, handler: Callable[[list[str]], bool] | None) -> None:
         """Set callback used by quick-link drops and context menu to ungroup devices."""
         self._device_unlink_request_handler = handler
+
+    def set_device_parent_change_request_handler(self, handler: Callable[[str, str], bool] | None) -> None:
+        """Set callback used by quick-link drops and context menu to move a device to a new parent."""
+        self._device_parent_change_request_handler = handler
 
     def add_camera_to_list(self, camera: Camera) -> None:
         """Add a camera to the panel snapshot."""
@@ -678,6 +697,8 @@ class ControlLayoutPanel(QWidget):
         self.tree_widget.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.tree_widget.set_device_link_request_handler(self._request_device_link_from_tree)
         self.tree_widget.set_device_unlink_request_handler(self._request_device_unlink_from_tree)
+        self.tree_widget.set_device_parent_change_request_handler(self._request_device_parent_change_from_tree)
+        self.tree_widget.device_parent_change_requested.connect(self.device_parent_change_requested.emit)
         self.tree_widget.itemSelectionChanged.connect(self._emit_focused_camera)
         self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_widget.customContextMenuRequested.connect(self._show_tree_context_menu)
@@ -1000,6 +1021,14 @@ class ControlLayoutPanel(QWidget):
         if self._device_unlink_request_handler is not None:
             return bool(self._device_unlink_request_handler(source_device_ids))
         self.device_unlink_requested.emit(source_device_ids)
+        return True
+
+    def _request_device_parent_change_from_tree(self, source_device_id: str, target_device_id: str) -> bool:
+        if self._device_parent_change_request_handler is not None:
+            return bool(self._device_parent_change_request_handler(source_device_id, target_device_id))
+        if self._device_link_request_handler is not None:
+            return bool(self._device_link_request_handler(source_device_id, target_device_id))
+        self.device_parent_change_requested.emit(source_device_id, target_device_id)
         return True
 
     def _has_parent_link(self, device_ids: list[str]) -> bool:

@@ -65,6 +65,8 @@ class CameraPlacementController:
             self.camera_panel.device_unlink_requested.connect(self.unlink_devices_from_group)
         if hasattr(self.camera_panel, "device_parent_change_requested"):
             self.camera_panel.device_parent_change_requested.connect(self.change_device_parent)
+        if hasattr(self.camera_panel, "set_device_parent_change_request_handler"):
+            self.camera_panel.set_device_parent_change_request_handler(self.change_device_parent)
 
     def load_cameras(self, layout_id: str | None = None) -> None:
         """Load persisted cameras into the sidebar and map."""
