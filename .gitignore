@@ -21,8 +21,10 @@ assets/data/*.db.bak
 
 bin/
 .pytest_*/
+.ruff_cache
 .continue/
 
+build/
 /assets/maps/
 /assets/data/
 /assets/camera_photos/
